@@ -1,8 +1,6 @@
 import { v } from "convex/values";
 import { action, mutation, query } from "./_generated/server.js";
-import { api } from "./_generated/api.js";
 import schema from "./schema.js";
-import StripeSDK from "stripe";
 
 // ============================================================================
 // VALIDATOR HELPERS
@@ -394,8 +392,9 @@ export const updateSubscriptionMetadata = mutation({
 
 /**
  * Update subscription quantity (for seat-based pricing).
- * This will update both Stripe and the local database.
- * Reads STRIPE_SECRET_KEY from environment variables.
+ * This component action cannot safely update Stripe directly because component
+ * actions do not have reliable access to STRIPE_SECRET_KEY.
+ * Use the StripeSubscriptions client to update Stripe, then sync Convex.
  */
 export const updateSubscriptionQuantity = action({
   args: {
@@ -403,30 +402,10 @@ export const updateSubscriptionQuantity = action({
     quantity: v.number(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
-    const apiKey = process.env.STRIPE_SECRET_KEY;
-    if (!apiKey) {
-      throw new Error("STRIPE_SECRET_KEY environment variable is not set");
-    }
-    const stripe = new StripeSDK(apiKey);
-
-    const subscription = await stripe.subscriptions.retrieve(
-      args.stripeSubscriptionId,
+  handler: async () => {
+    throw new Error(
+      "updateSubscriptionQuantity must be called through StripeSubscriptions.updateSubscriptionQuantity() so the Stripe secret key stays outside component actions",
     );
-
-    if (!subscription.items.data[0]) {
-      throw new Error("Subscription has no items");
-    }
-
-    await stripe.subscriptionItems.update(subscription.items.data[0].id, {
-      quantity: args.quantity,
-    });
-
-    await ctx.runMutation(api.private.updateSubscriptionQuantityInternal, {
-      stripeSubscriptionId: args.stripeSubscriptionId,
-      quantity: args.quantity,
-    });
-
     return null;
   },
 });

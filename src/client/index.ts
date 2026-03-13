@@ -54,7 +54,20 @@ export class StripeSubscriptions {
       quantity: number;
     },
   ) {
-    await ctx.runAction(this.component.public.updateSubscriptionQuantity, {
+    const stripe = new StripeSDK(this.apiKey);
+    const subscription = await stripe.subscriptions.retrieve(
+      args.stripeSubscriptionId,
+    );
+
+    if (!subscription.items.data[0]) {
+      throw new Error("Subscription has no items");
+    }
+
+    await stripe.subscriptionItems.update(subscription.items.data[0].id, {
+      quantity: args.quantity,
+    });
+
+    await ctx.runMutation(this.component.private.updateSubscriptionQuantityInternal, {
       stripeSubscriptionId: args.stripeSubscriptionId,
       quantity: args.quantity,
     });
