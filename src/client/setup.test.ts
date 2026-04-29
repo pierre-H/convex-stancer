@@ -7,7 +7,6 @@ import {
   type GenericSchema,
   type SchemaDefinition,
 } from "convex/server";
-import type { ComponentApi } from "../component/_generated/component.js";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -19,7 +18,7 @@ export function initConvexTest<
 }
 
 export const components = componentsGeneric() as unknown as {
-  stripe: ComponentApi;
+  stancer: any;
 };
 
 test("setup", () => {});

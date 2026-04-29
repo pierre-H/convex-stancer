@@ -2,9 +2,191 @@ import "./App.css";
 import { SignInButton, SignOutButton, useUser } from "@clerk/clerk-react";
 import { useAction, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-type Page = "home" | "store" | "profile" | "team";
+type Page = "home" | "store" | "profile" | "team" | "payment-callback";
+type CheckoutSource = "store" | "team" | "profile";
+type PaymentNoticeKind = "success" | "pending" | "error" | "canceled";
+
+type PaymentNotice = {
+  kind: PaymentNoticeKind;
+  message: string;
+};
+
+type CheckoutCallbackContext = {
+  paymentIntentId: string;
+  source: CheckoutSource;
+  orgId?: string;
+};
+
+type UiSubscription = {
+  stancerSubscriptionId: string;
+  stancerCustomerId: string;
+  status: string;
+  created: number;
+  orgId?: string;
+  userId?: string;
+  stancerPaymentIntentId?: string;
+  metadata?: any;
+  currentPeriodEnd?: number;
+  cancelAtPeriodEnd?: boolean;
+  quantity?: number;
+};
+
+const CALLBACK_CONTEXT_STORAGE_KEY = "stancer_callback_context";
+
+const PAGE_TO_PATH: Record<Page, string> = {
+  home: "/",
+  store: "/store",
+  profile: "/profile",
+  team: "/team",
+  "payment-callback": "/payment/callback",
+};
+
+const PATH_TO_PAGE: Record<string, Page> = {
+  "/": "home",
+  "/store": "store",
+  "/profile": "profile",
+  "/team": "team",
+  "/payment/callback": "payment-callback",
+};
+
+const PAYMENT_NOTICE_MESSAGES: Record<PaymentNoticeKind, string> = {
+  success: "Payment confirmed. Thank you for your purchase.",
+  pending: "Payment submitted and is still being confirmed.",
+  error: "We couldn't confirm the payment automatically. Please check your billing history.",
+  canceled: "Payment canceled.",
+};
+
+function getPageFromLocation(): Page {
+  return PATH_TO_PAGE[window.location.pathname] ?? "home";
+}
+
+function getPaymentNoticeFromLocation(): PaymentNotice | null {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get("canceled") === "true") {
+    return {
+      kind: "canceled",
+      message: PAYMENT_NOTICE_MESSAGES.canceled,
+    };
+  }
+
+  const payment = urlParams.get("payment");
+  if (
+    payment === "success" ||
+    payment === "pending" ||
+    payment === "error"
+  ) {
+    return {
+      kind: payment,
+      message: PAYMENT_NOTICE_MESSAGES[payment],
+    };
+  }
+
+  return null;
+}
+
+function persistCallbackContext(context: CheckoutCallbackContext) {
+  window.sessionStorage.setItem(
+    CALLBACK_CONTEXT_STORAGE_KEY,
+    JSON.stringify(context),
+  );
+}
+
+function readCallbackContext(): CheckoutCallbackContext | null {
+  const raw = window.sessionStorage.getItem(CALLBACK_CONTEXT_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as CheckoutCallbackContext;
+  } catch {
+    return null;
+  }
+}
+
+function clearCallbackContext() {
+  window.sessionStorage.removeItem(CALLBACK_CONTEXT_STORAGE_KEY);
+}
+
+function beginHostedCheckout(context: CheckoutCallbackContext, url: string) {
+  persistCallbackContext(context);
+  window.location.href = url;
+}
+
+function getPageForSource(source: CheckoutSource | null): Page {
+  if (source === "team") return "team";
+  if (source === "profile") return "profile";
+  return "store";
+}
+
+function getSourceFromSearchParams(
+  params: URLSearchParams,
+  fallback?: CheckoutSource | null,
+): CheckoutSource | null {
+  const sourceParam = params.get("source");
+  if (
+    sourceParam === "team" ||
+    sourceParam === "profile" ||
+    sourceParam === "store"
+  ) {
+    return sourceParam;
+  }
+  return fallback ?? null;
+}
+
+function buildPageUrl(page: Page, payment?: PaymentNoticeKind) {
+  const url = new URL(window.location.origin + PAGE_TO_PATH[page]);
+  if (payment && payment !== "canceled") {
+    url.searchParams.set("payment", payment);
+  }
+  if (payment === "canceled") {
+    url.searchParams.set("canceled", "true");
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+function getPaymentOutcome(status: string): PaymentNoticeKind {
+  const normalized = status.toLowerCase();
+  if (
+    [
+      "captured",
+      "capture_sent",
+      "paid",
+      "succeeded",
+      "success",
+      "completed",
+      "settled",
+      "authorized",
+      "to_capture",
+    ].includes(normalized)
+  ) {
+    return "success";
+  }
+  if (
+    [
+      "pending",
+      "open",
+      "requested",
+      "attempted",
+      "processing",
+      "in_progress",
+    ].includes(normalized)
+  ) {
+    return "pending";
+  }
+  return "error";
+}
+
+function getSubscriptionPeriodEnd(subscription: UiSubscription) {
+  return subscription.currentPeriodEnd ?? subscription.created;
+}
+
+function isCancelingSubscription(subscription: UiSubscription) {
+  return subscription.cancelAtPeriodEnd ?? false;
+}
+
+function getSubscriptionQuantity(subscription: UiSubscription) {
+  return subscription.quantity ?? 1;
+}
 
 // ============================================================================
 // SHARED UTILITIES
@@ -113,9 +295,9 @@ function Navbar({
 // ============================================================================
 function FailedPaymentBanner() {
   const failedSubscriptions = useQuery(
-    api.stripe.getFailedPaymentSubscriptions,
+    api.stancer.getFailedPaymentSubscriptions,
   );
-  const getPortalUrl = useAction(api.stripe.getCustomerPortalUrl);
+  const getPortalUrl = useAction(api.stancer.getCustomerPortalUrl);
   const [loading, setLoading] = useState(false);
 
   if (!failedSubscriptions || failedSubscriptions.length === 0) return null;
@@ -123,7 +305,7 @@ function FailedPaymentBanner() {
   const handleRetry = async () => {
     setLoading(true);
     try {
-      const result = await getPortalUrl({});
+      const result: any = await getPortalUrl({} as any);
       if (result?.url) {
         window.location.href = result.url;
       }
@@ -159,14 +341,14 @@ function Hero({ setCurrentPage }: { setCurrentPage: (page: Page) => void }) {
     <section className="hero">
       <div className="hero-container">
         <div className="hero-content">
-          <div className="hero-badge">Stripe Component Demo</div>
+          <div className="hero-badge">Stancer Component Demo</div>
           <h1 className="hero-title">
             Premium hats,
             <br />
             <em>delivered monthly</em>
           </h1>
           <p className="hero-subtitle">
-            The perfect example app for testing the @convex-dev/stripe
+            The perfect example app for testing the convex-stancer
             component. Buy a single hat or subscribe for monthly deliveries.
           </p>
           <div className="hero-buttons">
@@ -178,7 +360,7 @@ function Hero({ setCurrentPage }: { setCurrentPage: (page: Page) => void }) {
               <span>→</span>
             </button>
             <a
-              href="https://github.com/get-convex/convex-stripe"
+              href="https://github.com/get-convex/convex-stancer"
               target="_blank"
               rel="noopener noreferrer"
               className="btn-secondary"
@@ -204,7 +386,7 @@ function Hero({ setCurrentPage }: { setCurrentPage: (page: Page) => void }) {
                 <span className="code-function">useAction</span>(
               </div>
               <div>
-                &nbsp;&nbsp;api.stripe.
+                &nbsp;&nbsp;api.stancer.
                 <span className="code-function">createPaymentCheckout</span>
               </div>
               <div>);</div>
@@ -218,7 +400,7 @@ function Hero({ setCurrentPage }: { setCurrentPage: (page: Page) => void }) {
                 <span className="code-function">useAction</span>(
               </div>
               <div>
-                &nbsp;&nbsp;api.stripe.
+                &nbsp;&nbsp;api.stancer.
                 <span className="code-function">
                   createSubscriptionCheckout
                 </span>
@@ -252,15 +434,14 @@ function Features() {
     },
     {
       icon: "💳",
-      title: "Stripe Powered",
+      title: "Stancer Powered",
       description:
-        "Secure payments via Stripe Checkout. Manage billing in the Customer Portal.",
+        "Secure payments via Stancer payment intents with callback sync.",
     },
     {
       icon: "⚡",
       title: "Real-time Sync",
-      description:
-        "Convex webhooks keep your subscription status always up to date.",
+      description: "Convex actions sync payment statuses after callback.",
     },
     {
       icon: "👥",
@@ -281,7 +462,7 @@ function Features() {
         <span className="section-badge">How It Works</span>
         <h2 className="section-title">Payments made simple</h2>
         <p className="section-subtitle">
-          Built with the @convex-dev/stripe component for seamless Stripe
+          Built with the convex-stancer component for seamless Stancer
           integration.
         </p>
       </div>
@@ -330,12 +511,12 @@ function Footer() {
             Convex Docs
           </a>
           <a
-            href="https://stripe.com/docs"
+            href="https://docs.stancer.com/fr/API.html"
             target="_blank"
             rel="noopener noreferrer"
             className="footer-link"
           >
-            Stripe Docs
+            Stancer Docs
           </a>
           <a
             href="https://clerk.com/docs"
@@ -347,7 +528,7 @@ function Footer() {
           </a>
         </div>
         <div className="footer-copyright">
-          Built with Convex + Stripe + Clerk
+          Built with Convex + Stancer + Clerk
         </div>
       </div>
     </footer>
@@ -373,10 +554,11 @@ function LandingPage({
 // STORE PAGE
 // ============================================================================
 
-// Price IDs from environment variables (set in .env.local)
-const STRIPE_ONE_TIME_PRICE_ID = import.meta.env.VITE_STRIPE_ONE_TIME_PRICE_ID;
-const STRIPE_SUBSCRIPTION_PRICE_ID = import.meta.env
-  .VITE_STRIPE_SUBSCRIPTION_PRICE_ID;
+// Product IDs from environment variables (set in .env.local)
+const STANCER_ONE_TIME_PRODUCT_ID = import.meta.env
+  .VITE_STANCER_ONE_TIME_PRODUCT_ID;
+const STANCER_SUBSCRIPTION_PRODUCT_ID = import.meta.env
+  .VITE_STANCER_SUBSCRIPTION_PRODUCT_ID;
 
 const PRODUCTS = {
   oneTimeHat: {
@@ -384,7 +566,7 @@ const PRODUCTS = {
     name: "Benji's Hat",
     description: "A premium, handcrafted hat. One-time purchase.",
     price: 49,
-    priceId: STRIPE_ONE_TIME_PRICE_ID,
+    priceId: STANCER_ONE_TIME_PRODUCT_ID,
     type: "payment" as const,
     emoji: "🎩",
   },
@@ -394,7 +576,7 @@ const PRODUCTS = {
     description:
       "Get a new exclusive hat delivered every month. Cancel anytime.",
     price: 29,
-    priceId: STRIPE_SUBSCRIPTION_PRICE_ID,
+    priceId: STANCER_SUBSCRIPTION_PRODUCT_ID,
     type: "subscription" as const,
     emoji: "📦",
     interval: "month",
@@ -452,9 +634,9 @@ function StorePage({
   const { isSignedIn, user } = useUser();
   const [loading, setLoading] = useState<string | null>(null);
 
-  const createPaymentCheckout = useAction(api.stripe.createPaymentCheckout);
+  const createPaymentCheckout = useAction(api.stancer.createPaymentCheckout);
   const createSubscriptionCheckout = useAction(
-    api.stripe.createSubscriptionCheckout,
+    api.stancer.createSubscriptionCheckout,
   );
 
   if (!isSignedIn) {
@@ -491,12 +673,18 @@ function StorePage({
       }
 
       if (result.url) {
-        window.location.href = result.url;
+        beginHostedCheckout(
+          {
+            paymentIntentId: result.sessionId,
+            source: "store",
+          },
+          result.url,
+        );
       }
     } catch (error) {
       console.error("Checkout error:", error);
       alert(
-        "Failed to create checkout session. Make sure your Stripe Price IDs are configured.",
+        "Failed to create payment intent. Check your Stancer product IDs and environment setup.",
       );
     } finally {
       setLoading(null);
@@ -566,8 +754,8 @@ function StorePage({
           <strong>Testing the integration?</strong>
           <p>
             Replace the <code>priceId</code> values in <code>App.tsx</code> with
-            your actual Stripe Price IDs. Use <code>4242 4242 4242 4242</code>{" "}
-            as a test card number.
+            your actual Stancer product IDs and test using credentials from the
+            Stancer sandbox documentation.
           </p>
         </div>
       </div>
@@ -587,13 +775,13 @@ function ProfilePage({
   setCurrentPage: (page: Page) => void;
 }) {
   const { isSignedIn, user } = useUser();
-  const subscriptions = useQuery(api.stripe.getUserSubscriptions);
-  const payments = useQuery(api.stripe.getUserPayments);
-  const cancelSubscriptionAction = useAction(api.stripe.cancelSubscription);
+  const subscriptions = useQuery(api.stancer.getUserSubscriptions);
+  const payments = useQuery(api.stancer.getUserPayments);
+  const cancelSubscriptionAction = useAction(api.stancer.cancelSubscription);
   const reactivateSubscriptionAction = useAction(
-    api.stripe.reactivateSubscription,
+    api.stancer.reactivateSubscription,
   );
-  const getPortalUrl = useAction(api.stripe.getCustomerPortalUrl);
+  const getPortalUrl = useAction(api.stancer.getCustomerPortalUrl);
 
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [reactivatingId, setReactivatingId] = useState<string | null>(null);
@@ -653,7 +841,7 @@ function ProfilePage({
   const handleManageBilling = async () => {
     setPortalLoading(true);
     try {
-      const result = await getPortalUrl({});
+      const result: any = await getPortalUrl({} as any);
       if (result?.url) {
         window.location.href = result.url;
       } else {
@@ -743,16 +931,9 @@ function ProfilePage({
         ) : (
           <div className="subscription-list">
             {subscriptions.map(
-              (sub: {
-                stripeSubscriptionId: string;
-                stripeCustomerId: string;
-                status: string;
-                currentPeriodEnd: number;
-                cancelAtPeriodEnd: boolean;
-                quantity?: number;
-              }) => (
+              (sub: UiSubscription) => (
                 <div
-                  key={sub.stripeSubscriptionId}
+                  key={sub.stancerSubscriptionId}
                   className="subscription-card"
                 >
                   <div className="subscription-header">
@@ -767,16 +948,16 @@ function ProfilePage({
                     <div className="meta-item">
                       <span className="meta-label">Next delivery</span>
                       <span className="meta-value">
-                        {formatDate(sub.currentPeriodEnd)}
+                        {formatDate(getSubscriptionPeriodEnd(sub))}
                       </span>
                     </div>
-                    {sub.cancelAtPeriodEnd && (
+                    {isCancelingSubscription(sub) && (
                       <div className="meta-item">
                         <span className="meta-label cancel-notice">
                           Cancels on
                         </span>
                         <span className="meta-value">
-                          {formatDate(sub.currentPeriodEnd)}
+                          {formatDate(getSubscriptionPeriodEnd(sub))}
                         </span>
                       </div>
                     )}
@@ -795,31 +976,33 @@ function ProfilePage({
                     </button>
                   )}
 
-                  {sub.status === "active" && !sub.cancelAtPeriodEnd && (
+                  {sub.status === "active" && !isCancelingSubscription(sub) && (
                     <button
                       className="btn-cancel"
                       onClick={() =>
-                        handleCancelSubscription(sub.stripeSubscriptionId)
+                        handleCancelSubscription(sub.stancerSubscriptionId)
                       }
-                      disabled={cancelingId === sub.stripeSubscriptionId}
+                      disabled={cancelingId === sub.stancerSubscriptionId}
                     >
-                      {cancelingId === sub.stripeSubscriptionId
+                      {cancelingId === sub.stancerSubscriptionId
                         ? "Canceling..."
                         : "Cancel Subscription"}
                     </button>
                   )}
-                  {sub.cancelAtPeriodEnd && (
+                  {isCancelingSubscription(sub) && (
                     <div className="cancel-notice-banner">
                       ⚠️ Your subscription will end on{" "}
-                      {formatDate(sub.currentPeriodEnd)}
+                      {formatDate(getSubscriptionPeriodEnd(sub))}
                       <button
                         className="btn-reactivate"
                         onClick={() =>
-                          handleReactivateSubscription(sub.stripeSubscriptionId)
+                          handleReactivateSubscription(
+                            sub.stancerSubscriptionId,
+                          )
                         }
-                        disabled={reactivatingId === sub.stripeSubscriptionId}
+                        disabled={reactivatingId === sub.stancerSubscriptionId}
                       >
-                        {reactivatingId === sub.stripeSubscriptionId
+                        {reactivatingId === sub.stancerSubscriptionId
                           ? "Reactivating..."
                           : "Reactivate"}
                       </button>
@@ -863,8 +1046,8 @@ function ProfilePage({
               <span>Amount</span>
               <span>Status</span>
             </div>
-            {payments.map((payment) => (
-              <div key={payment.stripePaymentIntentId} className="table-row">
+            {payments.map((payment: any) => (
+              <div key={payment.stancerPaymentId} className="table-row">
                 <span className="order-date">
                   {formatDate(payment.created)}
                 </span>
@@ -892,29 +1075,30 @@ function ProfilePage({
 // ============================================================================
 
 function TeamBillingPage({
-  setCurrentPage,
+  setCurrentPage: _setCurrentPage,
 }: {
   setCurrentPage: (page: Page) => void;
 }) {
-  const { isSignedIn, user } = useUser();
+  const { isSignedIn } = useUser();
   const [orgId, setOrgId] = useState("demo-org-123");
 
   // Using the org-based queries
-  const orgSubscription = useQuery(api.stripe.getOrgSubscription, { orgId });
-  const orgInvoices = useQuery(api.stripe.getOrgInvoices, { orgId });
-  const updateSeatsAction = useAction(api.stripe.updateSeats);
+  const orgSubscription = useQuery(api.stancer.getOrgSubscription, { orgId });
+  const orgInvoices = useQuery(api.stancer.getOrgInvoices, { orgId });
+  const updateSeatsAction = useAction(api.stancer.updateSeats);
   const createTeamCheckout = useAction(
-    api.stripe.createTeamSubscriptionCheckout,
+    api.stancer.createTeamSubscriptionCheckout,
   );
-  const cancelSubscriptionAction = useAction(api.stripe.cancelSubscription);
+  const cancelSubscriptionAction = useAction(api.stancer.cancelSubscription);
   const reactivateSubscriptionAction = useAction(
-    api.stripe.reactivateSubscription,
+    api.stancer.reactivateSubscription,
   );
   const [updatingSeats, setUpdatingSeats] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const [reactivating, setReactivating] = useState(false);
   const [teamSeats, setTeamSeats] = useState(3);
+  const teamSubscription = orgSubscription as UiSubscription;
 
   if (!isSignedIn) {
     return (
@@ -940,7 +1124,7 @@ function TeamBillingPage({
     setUpdatingSeats(true);
     try {
       await updateSeatsAction({
-        subscriptionId: orgSubscription.stripeSubscriptionId,
+        subscriptionId: orgSubscription.stancerSubscriptionId,
         seatCount: newCount,
       });
     } catch (error) {
@@ -954,12 +1138,19 @@ function TeamBillingPage({
     setSubscribing(true);
     try {
       const result = await createTeamCheckout({
-        priceId: STRIPE_SUBSCRIPTION_PRICE_ID,
+        priceId: STANCER_SUBSCRIPTION_PRODUCT_ID,
         orgId: orgId,
         quantity: teamSeats,
       });
       if (result.url) {
-        window.location.href = result.url;
+        beginHostedCheckout(
+          {
+            paymentIntentId: result.sessionId,
+            source: "team",
+            orgId,
+          },
+          result.url,
+        );
       }
     } catch (error) {
       console.error("Team checkout error:", error);
@@ -982,7 +1173,7 @@ function TeamBillingPage({
     setCanceling(true);
     try {
       await cancelSubscriptionAction({
-        subscriptionId: orgSubscription.stripeSubscriptionId,
+        subscriptionId: orgSubscription.stancerSubscriptionId,
       });
     } catch (error) {
       console.error("Cancel error:", error);
@@ -998,7 +1189,7 @@ function TeamBillingPage({
     setReactivating(true);
     try {
       await reactivateSubscriptionAction({
-        subscriptionId: orgSubscription.stripeSubscriptionId,
+        subscriptionId: orgSubscription.stancerSubscriptionId,
       });
     } catch (error) {
       console.error("Reactivate error:", error);
@@ -1054,7 +1245,7 @@ function TeamBillingPage({
 
         {orgSubscription === undefined ? (
           <div className="loading-state">Loading team subscription...</div>
-        ) : orgSubscription === null ? (
+        ) : teamSubscription === null ? (
           <div className="empty-state team-subscribe-empty">
             <div className="empty-icon">👥</div>
             <h3>Start a Team Subscription</h3>
@@ -1106,16 +1297,16 @@ function TeamBillingPage({
               <div className="subscription-icon">🎩</div>
               <div className="subscription-details">
                 <h3>Team Hat Subscription</h3>
-                {getStatusBadge(orgSubscription.status)}
+                {getStatusBadge(teamSubscription.status)}
               </div>
             </div>
 
             {/* Seat Management - Disabled when canceling */}
             <div
-              className={`team-seats-section ${orgSubscription.cancelAtPeriodEnd ? "disabled" : ""}`}
+              className={`team-seats-section ${isCancelingSubscription(teamSubscription) ? "disabled" : ""}`}
             >
               <h4>Team Seats</h4>
-              {orgSubscription.cancelAtPeriodEnd && (
+              {isCancelingSubscription(teamSubscription) && (
                 <p className="seats-disabled-notice">
                   Seat management disabled for canceling subscriptions
                 </p>
@@ -1125,29 +1316,27 @@ function TeamBillingPage({
                   className="seat-btn-lg"
                   onClick={() =>
                     handleUpdateSeats(
-                      Math.max(1, (orgSubscription.quantity || 1) - 1),
+                      Math.max(1, getSubscriptionQuantity(teamSubscription) - 1),
                     )
                   }
                   disabled={
                     updatingSeats ||
-                    (orgSubscription.quantity || 1) <= 1 ||
-                    orgSubscription.cancelAtPeriodEnd
+                    getSubscriptionQuantity(teamSubscription) <= 1 ||
+                    isCancelingSubscription(teamSubscription)
                   }
                 >
                   −
                 </button>
                 <div className="team-seats-display">
                   <span className="seats-number">
-                    {updatingSeats ? "..." : orgSubscription.quantity || 1}
+                    {updatingSeats ? "..." : getSubscriptionQuantity(teamSubscription)}
                   </span>
                   <span className="seats-text">seats</span>
                 </div>
                 <button
                   className="seat-btn-lg"
-                  onClick={() =>
-                    handleUpdateSeats((orgSubscription.quantity || 1) + 1)
-                  }
-                  disabled={updatingSeats || orgSubscription.cancelAtPeriodEnd}
+                  onClick={() => handleUpdateSeats(getSubscriptionQuantity(teamSubscription) + 1)}
+                  disabled={updatingSeats || isCancelingSubscription(teamSubscription)}
                 >
                   +
                 </button>
@@ -1155,7 +1344,7 @@ function TeamBillingPage({
               <p className="seats-price">
                 $
                 {PRODUCTS.monthlySubscription.price *
-                  (orgSubscription.quantity || 1)}
+                  getSubscriptionQuantity(teamSubscription)}
                 /month
               </p>
             </div>
@@ -1163,27 +1352,27 @@ function TeamBillingPage({
             <div className="subscription-meta">
               <div className="meta-item">
                 <span className="meta-label">
-                  {orgSubscription.cancelAtPeriodEnd
+                  {isCancelingSubscription(teamSubscription)
                     ? "Cancels on"
                     : "Next billing date"}
                 </span>
                 <span className="meta-value">
-                  {formatDate(orgSubscription.currentPeriodEnd)}
+                  {formatDate(getSubscriptionPeriodEnd(teamSubscription))}
                 </span>
               </div>
               <div className="meta-item">
                 <span className="meta-label">Organization ID</span>
                 <span className="meta-value">
-                  {orgSubscription.orgId || "Not linked"}
+                  {teamSubscription.orgId || "Not linked"}
                 </span>
               </div>
             </div>
 
             {/* Cancellation Notice & Reactivate Button */}
-            {orgSubscription.cancelAtPeriodEnd && (
+            {isCancelingSubscription(teamSubscription) && (
               <div className="cancel-notice-banner">
                 ⚠️ This subscription will be canceled on{" "}
-                {formatDate(orgSubscription.currentPeriodEnd)}
+                {formatDate(getSubscriptionPeriodEnd(teamSubscription))}
                 <button
                   className="btn-reactivate"
                   onClick={handleReactivateSubscription}
@@ -1195,8 +1384,8 @@ function TeamBillingPage({
             )}
 
             {/* Cancel Button (only show if not already canceling) */}
-            {orgSubscription.status === "active" &&
-              !orgSubscription.cancelAtPeriodEnd && (
+            {teamSubscription.status === "active" &&
+              !isCancelingSubscription(teamSubscription) && (
                 <button
                   className="btn-cancel"
                   onClick={handleCancelTeamSubscription}
@@ -1234,8 +1423,8 @@ function TeamBillingPage({
               <span>Amount</span>
               <span>Status</span>
             </div>
-            {orgInvoices.map((invoice) => (
-              <div key={invoice.stripeInvoiceId} className="table-row">
+            {orgInvoices.map((invoice: any) => (
+              <div key={invoice.stancerInvoiceId} className="table-row">
                 <span className="order-date">
                   {formatDate(invoice.created)}
                 </span>
@@ -1261,55 +1450,202 @@ function TeamBillingPage({
   );
 }
 
+function PaymentCallbackPage() {
+  const syncPaymentAfterCallback = useAction(api.stancer.syncPaymentAfterCallback);
+  const [message, setMessage] = useState("Confirming your payment...");
+  const [isSyncing, setIsSyncing] = useState(true);
+  const [retryablePaymentIntentId, setRetryablePaymentIntentId] = useState<
+    string | null
+  >(null);
+  const [fallbackPage, setFallbackPage] = useState<Page>("store");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const storedContext = readCallbackContext();
+    setFallbackPage(getPageForSource(getSourceFromSearchParams(params, storedContext?.source)));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const confirmPayment = async (paymentIntentIdOverride?: string | null) => {
+      const params = new URLSearchParams(window.location.search);
+      const storedContext = readCallbackContext();
+      const source = getSourceFromSearchParams(params, storedContext?.source);
+      const paymentIntentId =
+        paymentIntentIdOverride ??
+        params.get("paymentIntentId") ??
+        storedContext?.paymentIntentId ??
+        null;
+
+      setIsSyncing(true);
+      setRetryablePaymentIntentId(paymentIntentId);
+
+      if (!paymentIntentId) {
+        setIsSyncing(false);
+        setMessage(
+          "Missing payment context. This callback needs the original browser session or an explicit payment intent id to confirm the payment.",
+        );
+        return;
+      }
+
+      try {
+        const result = await syncPaymentAfterCallback({ paymentIntentId });
+        if (cancelled) return;
+
+        clearCallbackContext();
+        window.location.replace(
+          buildPageUrl(getPageForSource(source), getPaymentOutcome(result.status)),
+        );
+      } catch (error) {
+        console.error("Payment callback sync error:", error);
+        if (cancelled) return;
+
+        setIsSyncing(false);
+        setMessage(
+          "We could not confirm the payment automatically. You can retry now or return to your billing pages and refresh later.",
+        );
+      }
+    };
+
+    void confirmPayment();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [syncPaymentAfterCallback]);
+
+  const handleRetry = async () => {
+    if (!retryablePaymentIntentId) return;
+    setMessage("Retrying payment confirmation...");
+    setIsSyncing(true);
+
+    const params = new URLSearchParams(window.location.search);
+    const storedContext = readCallbackContext();
+    const source = getSourceFromSearchParams(params, storedContext?.source);
+
+    try {
+      const result = await syncPaymentAfterCallback({
+        paymentIntentId: retryablePaymentIntentId,
+      });
+      clearCallbackContext();
+      window.location.replace(
+        buildPageUrl(getPageForSource(source), getPaymentOutcome(result.status)),
+      );
+    } catch (error) {
+      console.error("Payment callback retry error:", error);
+      setIsSyncing(false);
+      setMessage(
+        "Retry failed. You can return to the app and refresh your billing history later.",
+      );
+    }
+  };
+
+  const handleReturn = () => {
+    clearCallbackContext();
+    window.location.replace(buildPageUrl(fallbackPage, "error"));
+  };
+
+  return (
+    <div className="auth-page">
+      <div className="auth-container">
+        <h2 className="auth-title">Payment callback</h2>
+        <p className="auth-subtitle">{message}</p>
+        {!isSyncing && (
+          <div
+            style={{
+              display: "flex",
+              gap: "0.75rem",
+              justifyContent: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            {retryablePaymentIntentId && (
+              <button className="btn-primary" onClick={() => void handleRetry()}>
+                Retry confirmation
+              </button>
+            )}
+            <button className="btn-secondary" onClick={handleReturn}>
+              Return to app
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // MAIN APP
 // ============================================================================
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>("home");
-
-  // Check for success/cancel URL params and track in state
-  const urlParams = new URLSearchParams(window.location.search);
-  const [showSuccess, setShowSuccess] = useState(
-    urlParams.get("success") === "true",
+  const [currentPage, setCurrentPage] = useState<Page>(() =>
+    getPageFromLocation(),
   );
-  const [showCanceled, setShowCanceled] = useState(
-    urlParams.get("canceled") === "true",
+  const [paymentNotice, setPaymentNotice] = useState<PaymentNotice | null>(() =>
+    getPaymentNoticeFromLocation(),
   );
 
-  const dismissToast = (type: "success" | "canceled") => {
-    if (type === "success") setShowSuccess(false);
-    if (type === "canceled") setShowCanceled(false);
+  useEffect(() => {
+    const handlePopState = () => {
+      setCurrentPage(getPageFromLocation());
+      setPaymentNotice(getPaymentNoticeFromLocation());
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  const navigateToPage = (page: Page) => {
+    const nextPath = PAGE_TO_PATH[page];
+    window.history.pushState({}, "", nextPath);
+    setCurrentPage(page);
+    setPaymentNotice(null);
+  };
+
+  const dismissToast = () => {
+    setPaymentNotice(null);
     window.history.replaceState({}, "", window.location.pathname);
   };
 
   return (
     <>
-      <Navbar currentPage={currentPage} setCurrentPage={setCurrentPage} />
+      {currentPage !== "payment-callback" && (
+        <Navbar currentPage={currentPage} setCurrentPage={navigateToPage} />
+      )}
 
       {/* Success/Cancel Messages */}
-      {showSuccess && (
-        <div className="toast toast-success">
-          <span>✅</span> Payment successful! Thank you for your purchase.
-          <button onClick={() => dismissToast("success")}>×</button>
-        </div>
-      )}
-      {showCanceled && (
-        <div className="toast toast-warning">
-          <span>ℹ️</span> Payment canceled.
-          <button onClick={() => dismissToast("canceled")}>×</button>
+      {paymentNotice && (
+        <div
+          className={`toast ${paymentNotice.kind === "success" ? "toast-success" : paymentNotice.kind === "canceled" ? "toast-warning" : paymentNotice.kind === "pending" ? "toast-warning" : "toast-error"}`}
+        >
+          <span>
+            {paymentNotice.kind === "success"
+              ? "✅"
+              : paymentNotice.kind === "pending"
+                ? "⏳"
+                : paymentNotice.kind === "canceled"
+                  ? "ℹ️"
+                  : "⚠️"}
+          </span>{" "}
+          {paymentNotice.message}
+          <button onClick={dismissToast}>×</button>
         </div>
       )}
 
+      {currentPage === "payment-callback" && <PaymentCallbackPage />}
       {currentPage === "home" && (
-        <LandingPage setCurrentPage={setCurrentPage} />
+        <LandingPage setCurrentPage={navigateToPage} />
       )}
-      {currentPage === "store" && <StorePage setCurrentPage={setCurrentPage} />}
+      {currentPage === "store" && (
+        <StorePage setCurrentPage={navigateToPage} />
+      )}
       {currentPage === "profile" && (
-        <ProfilePage setCurrentPage={setCurrentPage} />
+        <ProfilePage setCurrentPage={navigateToPage} />
       )}
       {currentPage === "team" && (
-        <TeamBillingPage setCurrentPage={setCurrentPage} />
+        <TeamBillingPage setCurrentPage={navigateToPage} />
       )}
     </>
   );

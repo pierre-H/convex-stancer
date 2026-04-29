@@ -1,33 +1,21 @@
 import { v } from "convex/values";
-import { action, mutation, query } from "./_generated/server.js";
+import { mutation, query } from "./_generated/server.js";
 import schema from "./schema.js";
 
-// ============================================================================
-// VALIDATOR HELPERS
-// ============================================================================
-
-// Reusable validators that omit system fields (_id, _creationTime)
 const customerValidator = schema.tables.customers.validator;
 const subscriptionValidator = schema.tables.subscriptions.validator;
-const checkoutSessionValidator = schema.tables.checkout_sessions.validator;
+const paymentIntentValidator = schema.tables.payment_intents.validator;
 const paymentValidator = schema.tables.payments.validator;
-const invoiceValidator = schema.tables.invoices.validator;
+const refundValidator = schema.tables.refunds.validator;
 
-// ============================================================================
-// PUBLIC QUERIES
-// ============================================================================
-
-/**
- * Get a customer by their Stripe customer ID.
- */
 export const getCustomer = query({
-  args: { stripeCustomerId: v.string() },
+  args: { stancerCustomerId: v.string() },
   returns: v.union(customerValidator, v.null()),
   handler: async (ctx, args) => {
     const customer = await ctx.db
       .query("customers")
-      .withIndex("by_stripe_customer_id", (q) =>
-        q.eq("stripeCustomerId", args.stripeCustomerId),
+      .withIndex("by_stancer_customer_id", (q) =>
+        q.eq("stancerCustomerId", args.stancerCustomerId),
       )
       .unique();
     if (!customer) return null;
@@ -36,10 +24,6 @@ export const getCustomer = query({
   },
 });
 
-/**
- * Get a customer by their email address.
- * Uses the by_email index for efficient lookup.
- */
 export const getCustomerByEmail = query({
   args: { email: v.string() },
   returns: v.union(customerValidator, v.null()),
@@ -54,10 +38,6 @@ export const getCustomerByEmail = query({
   },
 });
 
-/**
- * Get a customer by their user ID.
- * Uses the by_user_id index for efficient lookup.
- */
 export const getCustomerByUserId = query({
   args: { userId: v.string() },
   returns: v.union(customerValidator, v.null()),
@@ -72,17 +52,14 @@ export const getCustomerByUserId = query({
   },
 });
 
-/**
- * Get a subscription by its Stripe subscription ID.
- */
 export const getSubscription = query({
-  args: { stripeSubscriptionId: v.string() },
+  args: { stancerSubscriptionId: v.string() },
   returns: v.union(subscriptionValidator, v.null()),
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query("subscriptions")
-      .withIndex("by_stripe_subscription_id", (q) =>
-        q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
+      .withIndex("by_stancer_subscription_id", (q) =>
+        q.eq("stancerSubscriptionId", args.stancerSubscriptionId),
       )
       .unique();
     if (!subscription) return null;
@@ -91,27 +68,20 @@ export const getSubscription = query({
   },
 });
 
-/**
- * List all subscriptions for a customer.
- */
 export const listSubscriptions = query({
-  args: { stripeCustomerId: v.string() },
+  args: { stancerCustomerId: v.string() },
   returns: v.array(subscriptionValidator),
   handler: async (ctx, args) => {
     const subscriptions = await ctx.db
       .query("subscriptions")
-      .withIndex("by_stripe_customer_id", (q) =>
-        q.eq("stripeCustomerId", args.stripeCustomerId),
+      .withIndex("by_stancer_customer_id", (q) =>
+        q.eq("stancerCustomerId", args.stancerCustomerId),
       )
       .collect();
     return subscriptions.map(({ _id, _creationTime, ...data }) => data);
   },
 });
 
-/**
- * Get a subscription by organization ID.
- * Useful for looking up subscriptions by custom orgId.
- */
 export const getSubscriptionByOrgId = query({
   args: { orgId: v.string() },
   returns: v.union(subscriptionValidator, v.null()),
@@ -126,9 +96,6 @@ export const getSubscriptionByOrgId = query({
   },
 });
 
-/**
- * List all subscriptions for an organization ID.
- */
 export const listSubscriptionsByOrgId = query({
   args: { orgId: v.string() },
   returns: v.array(subscriptionValidator),
@@ -141,10 +108,6 @@ export const listSubscriptionsByOrgId = query({
   },
 });
 
-/**
- * List all subscriptions for a user ID.
- * Useful for looking up subscriptions by custom userId.
- */
 export const listSubscriptionsByUserId = query({
   args: { userId: v.string() },
   returns: v.array(subscriptionValidator),
@@ -157,17 +120,44 @@ export const listSubscriptionsByUserId = query({
   },
 });
 
-/**
- * Get a payment by its Stripe payment intent ID.
- */
+export const getPaymentIntent = query({
+  args: { stancerPaymentIntentId: v.string() },
+  returns: v.union(paymentIntentValidator, v.null()),
+  handler: async (ctx, args) => {
+    const paymentIntent = await ctx.db
+      .query("payment_intents")
+      .withIndex("by_stancer_payment_intent_id", (q) =>
+        q.eq("stancerPaymentIntentId", args.stancerPaymentIntentId),
+      )
+      .unique();
+    if (!paymentIntent) return null;
+    const { _id, _creationTime, ...data } = paymentIntent;
+    return data;
+  },
+});
+
+export const listPaymentIntents = query({
+  args: { stancerCustomerId: v.string() },
+  returns: v.array(paymentIntentValidator),
+  handler: async (ctx, args) => {
+    const paymentIntents = await ctx.db
+      .query("payment_intents")
+      .withIndex("by_stancer_customer_id", (q) =>
+        q.eq("stancerCustomerId", args.stancerCustomerId),
+      )
+      .collect();
+    return paymentIntents.map(({ _id, _creationTime, ...data }) => data);
+  },
+});
+
 export const getPayment = query({
-  args: { stripePaymentIntentId: v.string() },
+  args: { stancerPaymentId: v.string() },
   returns: v.union(paymentValidator, v.null()),
   handler: async (ctx, args) => {
     const payment = await ctx.db
       .query("payments")
-      .withIndex("by_stripe_payment_intent_id", (q) =>
-        q.eq("stripePaymentIntentId", args.stripePaymentIntentId),
+      .withIndex("by_stancer_payment_id", (q) =>
+        q.eq("stancerPaymentId", args.stancerPaymentId),
       )
       .unique();
     if (!payment) return null;
@@ -176,26 +166,36 @@ export const getPayment = query({
   },
 });
 
-/**
- * List payments for a customer.
- */
+export const getPaymentByPaymentIntent = query({
+  args: { stancerPaymentIntentId: v.string() },
+  returns: v.union(paymentValidator, v.null()),
+  handler: async (ctx, args) => {
+    const payment = await ctx.db
+      .query("payments")
+      .withIndex("by_stancer_payment_intent_id", (q) =>
+        q.eq("stancerPaymentIntentId", args.stancerPaymentIntentId),
+      )
+      .first();
+    if (!payment) return null;
+    const { _id, _creationTime, ...data } = payment;
+    return data;
+  },
+});
+
 export const listPayments = query({
-  args: { stripeCustomerId: v.string() },
+  args: { stancerCustomerId: v.string() },
   returns: v.array(paymentValidator),
   handler: async (ctx, args) => {
     const payments = await ctx.db
       .query("payments")
-      .withIndex("by_stripe_customer_id", (q) =>
-        q.eq("stripeCustomerId", args.stripeCustomerId),
+      .withIndex("by_stancer_customer_id", (q) =>
+        q.eq("stancerCustomerId", args.stancerCustomerId),
       )
       .collect();
     return payments.map(({ _id, _creationTime, ...data }) => data);
   },
 });
 
-/**
- * List payments for a user ID.
- */
 export const listPaymentsByUserId = query({
   args: { userId: v.string() },
   returns: v.array(paymentValidator),
@@ -208,9 +208,6 @@ export const listPaymentsByUserId = query({
   },
 });
 
-/**
- * List payments for an organization ID.
- */
 export const listPaymentsByOrgId = query({
   args: { orgId: v.string() },
   returns: v.array(paymentValidator),
@@ -223,144 +220,108 @@ export const listPaymentsByOrgId = query({
   },
 });
 
-/**
- * List invoices for a customer.
- */
-export const listInvoices = query({
-  args: { stripeCustomerId: v.string() },
-  returns: v.array(invoiceValidator),
+export const listRefundsByPaymentId = query({
+  args: { stancerPaymentId: v.string() },
+  returns: v.array(refundValidator),
   handler: async (ctx, args) => {
-    const invoices = await ctx.db
-      .query("invoices")
-      .withIndex("by_stripe_customer_id", (q) =>
-        q.eq("stripeCustomerId", args.stripeCustomerId),
+    const refunds = await ctx.db
+      .query("refunds")
+      .withIndex("by_stancer_payment_id", (q) =>
+        q.eq("stancerPaymentId", args.stancerPaymentId),
       )
       .collect();
-    return invoices.map(({ _id, _creationTime, ...data }) => data);
+    return refunds.map(({ _id, _creationTime, ...data }) => data);
   },
 });
 
-/**
- * List invoices for an organization ID.
- */
+export const listRefundsByPaymentIntentId = query({
+  args: { stancerPaymentIntentId: v.string() },
+  returns: v.array(refundValidator),
+  handler: async (ctx, args) => {
+    const refunds = await ctx.db
+      .query("refunds")
+      .withIndex("by_stancer_payment_intent_id", (q) =>
+        q.eq("stancerPaymentIntentId", args.stancerPaymentIntentId),
+      )
+      .collect();
+    return refunds.map(({ _id, _creationTime, ...data }) => data);
+  },
+});
+
+export const listInvoices = query({
+  args: { stancerCustomerId: v.string() },
+  returns: v.array(v.any()),
+  handler: async () => {
+    return [];
+  },
+});
+
 export const listInvoicesByOrgId = query({
   args: { orgId: v.string() },
-  returns: v.array(invoiceValidator),
-  handler: async (ctx, args) => {
-    const invoices = await ctx.db
-      .query("invoices")
-      .withIndex("by_org_id", (q) => q.eq("orgId", args.orgId))
-      .collect();
-    return invoices.map(({ _id, _creationTime, ...data }) => data);
+  returns: v.array(v.any()),
+  handler: async () => {
+    return [];
   },
 });
 
-/**
- * List invoices for a user ID.
- */
 export const listInvoicesByUserId = query({
   args: { userId: v.string() },
-  returns: v.array(invoiceValidator),
-  handler: async (ctx, args) => {
-    const invoices = await ctx.db
-      .query("invoices")
-      .withIndex("by_user_id", (q) => q.eq("userId", args.userId))
-      .collect();
-    return invoices.map(({ _id, _creationTime, ...data }) => data);
+  returns: v.array(v.any()),
+  handler: async () => {
+    return [];
   },
 });
 
-/**
- * Get a checkout session by its Stripe checkout session ID.
- */
-export const getCheckoutSession = query({
-  args: { stripeCheckoutSessionId: v.string() },
-  returns: v.union(checkoutSessionValidator, v.null()),
-  handler: async (ctx, args) => {
-    const session = await ctx.db
-      .query("checkout_sessions")
-      .withIndex("by_stripe_checkout_session_id", (q) =>
-        q.eq("stripeCheckoutSessionId", args.stripeCheckoutSessionId),
-      )
-      .unique();
-    if (!session) return null;
-    const { _id, _creationTime, ...data } = session;
-    return data;
-  },
-});
-
-/**
- * List checkout sessions for a customer.
- */
-export const listCheckoutSessions = query({
-  args: { stripeCustomerId: v.string() },
-  returns: v.array(checkoutSessionValidator),
-  handler: async (ctx, args) => {
-    const sessions = await ctx.db
-      .query("checkout_sessions")
-      .withIndex("by_stripe_customer_id", (q) =>
-        q.eq("stripeCustomerId", args.stripeCustomerId),
-      )
-      .collect();
-    return sessions.map(({ _id, _creationTime, ...data }) => data);
-  },
-});
-
-// ============================================================================
-// PUBLIC MUTATIONS
-// ============================================================================
-
-/**
- * Create or update a customer with metadata.
- * Returns the stripeCustomerId for consistency with the API.
- */
 export const createOrUpdateCustomer = mutation({
   args: {
-    stripeCustomerId: v.string(),
+    stancerCustomerId: v.string(),
     email: v.optional(v.string()),
     name: v.optional(v.string()),
+    mobile: v.optional(v.string()),
     metadata: v.optional(v.any()),
   },
   returns: v.string(),
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("customers")
-      .withIndex("by_stripe_customer_id", (q) =>
-        q.eq("stripeCustomerId", args.stripeCustomerId),
+      .withIndex("by_stancer_customer_id", (q) =>
+        q.eq("stancerCustomerId", args.stancerCustomerId),
       )
       .unique();
 
-    const metadata = args.metadata || {};
-    const userId = metadata.userId as string | undefined;
+    const metadata = args.metadata;
+    const userId =
+      metadata && typeof metadata === "object"
+        ? (metadata as Record<string, unknown>).userId
+        : undefined;
 
     if (existing) {
       await ctx.db.patch(existing._id, {
         ...(args.email !== undefined && { email: args.email }),
         ...(args.name !== undefined && { name: args.name }),
+        ...(args.mobile !== undefined && { mobile: args.mobile }),
         ...(args.metadata !== undefined && { metadata: args.metadata }),
-        ...(userId !== undefined && { userId }),
+        ...(typeof userId === "string" && { userId }),
       });
-    } else {
-      await ctx.db.insert("customers", {
-        stripeCustomerId: args.stripeCustomerId,
-        email: args.email,
-        name: args.name,
-        metadata: args.metadata,
-        userId,
-      });
+      return args.stancerCustomerId;
     }
-    return args.stripeCustomerId;
+
+    await ctx.db.insert("customers", {
+      stancerCustomerId: args.stancerCustomerId,
+      email: args.email,
+      name: args.name,
+      mobile: args.mobile,
+      metadata: args.metadata,
+      ...(typeof userId === "string" && { userId }),
+    });
+
+    return args.stancerCustomerId;
   },
 });
 
-/**
- * Update subscription metadata for custom lookups.
- * You can provide orgId and userId for efficient indexed lookups,
- * and additional data in the metadata field.
- */
 export const updateSubscriptionMetadata = mutation({
   args: {
-    stripeSubscriptionId: v.string(),
+    stancerSubscriptionId: v.string(),
     metadata: v.any(),
     orgId: v.optional(v.string()),
     userId: v.optional(v.string()),
@@ -369,14 +330,14 @@ export const updateSubscriptionMetadata = mutation({
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query("subscriptions")
-      .withIndex("by_stripe_subscription_id", (q) =>
-        q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
+      .withIndex("by_stancer_subscription_id", (q) =>
+        q.eq("stancerSubscriptionId", args.stancerSubscriptionId),
       )
       .unique();
 
     if (!subscription) {
       throw new Error(
-        `Subscription ${args.stripeSubscriptionId} not found in database`,
+        `Subscription ${args.stancerSubscriptionId} not found in database`,
       );
     }
 
@@ -385,27 +346,6 @@ export const updateSubscriptionMetadata = mutation({
       ...(args.orgId !== undefined && { orgId: args.orgId }),
       ...(args.userId !== undefined && { userId: args.userId }),
     });
-
-    return null;
-  },
-});
-
-/**
- * Update subscription quantity (for seat-based pricing).
- * This component action cannot safely update Stripe directly because component
- * actions do not have reliable access to STRIPE_SECRET_KEY.
- * Use the StripeSubscriptions client to update Stripe, then sync Convex.
- */
-export const updateSubscriptionQuantity = action({
-  args: {
-    stripeSubscriptionId: v.string(),
-    quantity: v.number(),
-  },
-  returns: v.null(),
-  handler: async () => {
-    throw new Error(
-      "updateSubscriptionQuantity must be called through StripeSubscriptions.updateSubscriptionQuantity() so the Stripe secret key stays outside component actions",
-    );
     return null;
   },
 });

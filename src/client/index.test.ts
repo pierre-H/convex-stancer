@@ -1,94 +1,138 @@
-import { describe, expect, test, vi } from "vitest";
-import { StripeSubscriptions, registerRoutes } from "./index.js";
+import { describe, expect, test, vi, beforeEach, afterEach } from "vitest";
+import { StancerPayments } from "./index.js";
 import { components } from "./setup.test.js";
 
-const stripeMocks = vi.hoisted(() => ({
-  retrieveSubscription: vi.fn(),
-  updateSubscriptionItem: vi.fn(),
-}));
+describe("StancerPayments client", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
 
-vi.mock("stripe", () => ({
-  default: vi.fn().mockImplementation(() => ({
-    subscriptions: {
-      retrieve: stripeMocks.retrieveSubscription,
-    },
-    subscriptionItems: {
-      update: stripeMocks.updateSubscriptionItem,
-    },
-  })),
-}));
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
-describe("StripeSubscriptions client", () => {
-  test("should create Stripe client with component", async () => {
-    const client = new StripeSubscriptions(components.stripe);
+  test("creates client with component", () => {
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+    });
     expect(client).toBeDefined();
     expect(client.component).toBeDefined();
   });
 
-  test("should accept STRIPE_SECRET_KEY option", async () => {
-    const client = new StripeSubscriptions(components.stripe, {
-      STRIPE_SECRET_KEY: "sk_test_123",
-    });
-    expect(client).toBeDefined();
-    // The apiKey getter should return the provided key
-    expect(client.apiKey).toBe("sk_test_123");
-  });
+  test("throws when api key is missing", () => {
+    const original = process.env.STANCER_API_KEY;
+    delete process.env.STANCER_API_KEY;
 
-  test("should throw error when accessing apiKey without key set", async () => {
-    // Clear the environment variable temporarily
-    const originalKey = process.env.STRIPE_SECRET_KEY;
-    delete process.env.STRIPE_SECRET_KEY;
-
-    const client = new StripeSubscriptions(components.stripe);
-
+    const client = new StancerPayments(components.stancer);
     expect(() => client.apiKey).toThrow(
-      "STRIPE_SECRET_KEY environment variable is not set"
+      "STANCER_API_KEY environment variable is not set",
     );
 
-    // Restore the environment variable
-    if (originalKey) {
-      process.env.STRIPE_SECRET_KEY = originalKey;
-    }
+    if (original) process.env.STANCER_API_KEY = original;
   });
 
-  test("should update Stripe then sync quantity via internal mutation", async () => {
-    stripeMocks.retrieveSubscription.mockResolvedValue({
-      items: { data: [{ id: "si_test_123" }] },
+  test("createPaymentIntent stores intent via internal mutation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "pi_test_123",
+        customer: "cust_test_123",
+        amount: 1999,
+        currency: "eur",
+        status: "require_payment_method",
+        url: "https://payment.stancer.com/pi_test_123",
+        created: 1710000000,
+      }),
     });
-    stripeMocks.updateSubscriptionItem.mockResolvedValue({});
+    vi.stubGlobal("fetch", fetchMock);
 
     const ctx = {
       runAction: vi.fn(),
-      runMutation: vi.fn().mockResolvedValue(null),
       runQuery: vi.fn(),
+      runMutation: vi.fn().mockResolvedValue(null),
     };
-    const client = new StripeSubscriptions(components.stripe, {
-      STRIPE_SECRET_KEY: "sk_test_123",
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+      STANCER_API_BASE_URL: "https://api.stancer.com/v2",
     });
 
-    await client.updateSubscriptionQuantity(ctx, {
-      stripeSubscriptionId: "sub_test_123",
-      quantity: 7,
+    const result = await client.createPaymentIntent(ctx, {
+      amount: 1999,
+      customerId: "cust_test_123",
+      returnUrl: "https://app.example.com/payment/callback",
+      metadata: { userId: "user_123" },
     });
 
-    expect(stripeMocks.retrieveSubscription).toHaveBeenCalledWith("sub_test_123");
-    expect(stripeMocks.updateSubscriptionItem).toHaveBeenCalledWith(
-      "si_test_123",
-      { quantity: 7 },
+    expect(result.paymentIntentId).toBe("pi_test_123");
+    expect(result.url).toContain("stancer.com");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(ctx.runMutation).toHaveBeenCalledWith(
+      components.stancer.private.upsertPaymentIntentFromStancer,
+      expect.objectContaining({
+        stancerPaymentIntentId: "pi_test_123",
+        stancerCustomerId: "cust_test_123",
+        amount: 1999,
+      }),
+    );
+  });
+
+  test("syncPaymentIntentStatus fetches payment and upserts both", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: "pi_test_456",
+          customer: "cust_test_456",
+          payment: "paym_test_456",
+          amount: 5000,
+          currency: "eur",
+          status: "captured",
+          url: "https://payment.stancer.com/pi_test_456",
+          created: 1710000000,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: "paym_test_456",
+          payment_intent: "pi_test_456",
+          customer: "cust_test_456",
+          amount: 5000,
+          currency: "eur",
+          status: "captured",
+          created: 1710000002,
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = {
+      runAction: vi.fn(),
+      runQuery: vi.fn(),
+      runMutation: vi.fn().mockResolvedValue(null),
+    };
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+    });
+
+    const result = await client.syncPaymentIntentStatus(ctx, {
+      paymentIntentId: "pi_test_456",
+    });
+
+    expect(result.status).toBe("captured");
+    expect(result.paymentId).toBe("paym_test_456");
+    expect(ctx.runMutation).toHaveBeenCalledWith(
+      components.stancer.private.upsertPaymentIntentFromStancer,
+      expect.any(Object),
     );
     expect(ctx.runMutation).toHaveBeenCalledWith(
-      components.stripe.private.updateSubscriptionQuantityInternal,
-      {
-        stripeSubscriptionId: "sub_test_123",
-        quantity: 7,
-      },
+      components.stancer.private.upsertPaymentFromStancer,
+      expect.objectContaining({
+        stancerPaymentId: "paym_test_456",
+        stancerPaymentIntentId: "pi_test_456",
+      }),
     );
-    expect(ctx.runAction).not.toHaveBeenCalled();
-  });
-});
-
-describe("registerRoutes", () => {
-  test("registerRoutes function should be exported", () => {
-    expect(typeof registerRoutes).toBe("function");
   });
 });

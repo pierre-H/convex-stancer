@@ -1,426 +1,173 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server.js";
+import { mutation } from "./_generated/server.js";
 
-// ============================================================================
-// INTERNAL QUERIES (for webhooks and internal use)
-// ============================================================================
-
-export const listSubscriptionsWithCreationTime = query({
-  args: { stripeCustomerId: v.string() },
-  returns: v.array(
-    v.object({
-      _creationTime: v.number(),
-      stripeSubscriptionId: v.string(),
-      stripeCustomerId: v.string(),
-      status: v.string(),
-    }),
-  ),
-  handler: async (ctx, args) => {
-    const subscriptions = await ctx.db
-      .query("subscriptions")
-      .withIndex("by_stripe_customer_id", (q) =>
-        q.eq("stripeCustomerId", args.stripeCustomerId),
-      )
-      .collect();
-    return subscriptions.map((s) => ({
-      _creationTime: s._creationTime,
-      stripeSubscriptionId: s.stripeSubscriptionId,
-      stripeCustomerId: s.stripeCustomerId,
-      status: s.status,
-    }));
-  },
-});
-
-// ============================================================================
-// INTERNAL MUTATIONS (for webhooks and internal use)
-// ============================================================================
-
-export const updateSubscriptionQuantityInternal = mutation({
-  args: {
-    stripeSubscriptionId: v.string(),
-    quantity: v.number(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query("subscriptions")
-      .withIndex("by_stripe_subscription_id", (q) =>
-        q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
-      )
-      .unique();
-
-    if (subscription) {
-      await ctx.db.patch(subscription._id, {
-        quantity: args.quantity,
-      });
-    }
-
-    return null;
-  },
-});
-
-export const handleCustomerCreated = mutation({
-  args: {
-    stripeCustomerId: v.string(),
-    email: v.optional(v.string()),
-    name: v.optional(v.string()),
-    metadata: v.optional(v.any()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("customers")
-      .withIndex("by_stripe_customer_id", (q) =>
-        q.eq("stripeCustomerId", args.stripeCustomerId),
-      )
-      .unique();
-
-    if (!existing) {
-      const metadata = args.metadata || {};
-      const userId = metadata.userId as string | undefined;
-      await ctx.db.insert("customers", {
-        stripeCustomerId: args.stripeCustomerId,
-        email: args.email,
-        name: args.name,
-        metadata,
-        userId,
-      });
-    }
-
-    return null;
-  },
-});
-
-export const handleCustomerUpdated = mutation({
-  args: {
-    stripeCustomerId: v.string(),
-    email: v.optional(v.string()),
-    name: v.optional(v.string()),
-    metadata: v.optional(v.any()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const customer = await ctx.db
-      .query("customers")
-      .withIndex("by_stripe_customer_id", (q) =>
-        q.eq("stripeCustomerId", args.stripeCustomerId),
-      )
-      .unique();
-
-    if (customer) {
-      await ctx.db.patch(customer._id, {
-        email: args.email,
-        name: args.name,
-        metadata: args.metadata,
-      });
-    }
-
-    return null;
-  },
-});
-
-function deriveCancelAtPeriodEnd(
-  cancelAt: number | undefined,
-  currentPeriodEnd: number,
-): boolean {
-  const tolerance = 60 * 5; // 5 minutes
-
-  if (typeof cancelAt !== "number") return false;
-  if (currentPeriodEnd <= 0) return false;
-  return Math.abs(cancelAt - currentPeriodEnd) <= tolerance;
+function extractLinkingFields(metadata: unknown): {
+  orgId: string | undefined;
+  userId: string | undefined;
+} {
+  if (!metadata || typeof metadata !== "object") {
+    return { orgId: undefined, userId: undefined };
+  }
+  const value = metadata as Record<string, unknown>;
+  return {
+    orgId: typeof value.orgId === "string" ? value.orgId : undefined,
+    userId: typeof value.userId === "string" ? value.userId : undefined,
+  };
 }
 
-export const handleSubscriptionCreated = mutation({
+export const upsertCustomerFromStancer = mutation({
   args: {
-    stripeSubscriptionId: v.string(),
-    stripeCustomerId: v.string(),
+    stancerCustomerId: v.string(),
+    email: v.optional(v.string()),
+    name: v.optional(v.string()),
+    mobile: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("customers")
+      .withIndex("by_stancer_customer_id", (q) =>
+        q.eq("stancerCustomerId", args.stancerCustomerId),
+      )
+      .unique();
+
+    const { userId } = extractLinkingFields(args.metadata);
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        ...(args.email !== undefined && { email: args.email }),
+        ...(args.name !== undefined && { name: args.name }),
+        ...(args.mobile !== undefined && { mobile: args.mobile }),
+        ...(args.metadata !== undefined && { metadata: args.metadata }),
+        ...(userId !== undefined && { userId }),
+      });
+      return null;
+    }
+
+    await ctx.db.insert("customers", {
+      stancerCustomerId: args.stancerCustomerId,
+      email: args.email,
+      name: args.name,
+      mobile: args.mobile,
+      metadata: args.metadata,
+      userId,
+    });
+    return null;
+  },
+});
+
+export const upsertSubscriptionFromStancer = mutation({
+  args: {
+    stancerSubscriptionId: v.string(),
+    stancerCustomerId: v.string(),
+    stancerPaymentIntentId: v.optional(v.string()),
     status: v.string(),
-    currentPeriodEnd: v.number(),
-    cancelAtPeriodEnd: v.boolean(),
-    cancelAt: v.optional(v.number()),
-    quantity: v.optional(v.number()),
-    priceId: v.string(),
+    created: v.number(),
     metadata: v.optional(v.any()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("subscriptions")
-      .withIndex("by_stripe_subscription_id", (q) =>
-        q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
+      .withIndex("by_stancer_subscription_id", (q) =>
+        q.eq("stancerSubscriptionId", args.stancerSubscriptionId),
       )
       .unique();
 
-    // Extract orgId and userId from metadata if present
-    const metadata = args.metadata || {};
-    const orgId = metadata.orgId as string | undefined;
-    const userId = metadata.userId as string | undefined;
+    const { orgId, userId } = extractLinkingFields(args.metadata);
 
-    const cancelAtPeriodEnd = args.cancelAtPeriodEnd || 
-      deriveCancelAtPeriodEnd(args.cancelAt, args.currentPeriodEnd);
-
-    if (!existing) {
-      await ctx.db.insert("subscriptions", {
-        stripeSubscriptionId: args.stripeSubscriptionId,
-        stripeCustomerId: args.stripeCustomerId,
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        stancerCustomerId: args.stancerCustomerId,
+        ...(args.stancerPaymentIntentId !== undefined && {
+          stancerPaymentIntentId: args.stancerPaymentIntentId,
+        }),
         status: args.status,
-        currentPeriodEnd: args.currentPeriodEnd,
-        cancelAtPeriodEnd: cancelAtPeriodEnd,
-        cancelAt: args.cancelAt ?? undefined,
-        quantity: args.quantity,
-        priceId: args.priceId,
-        metadata: metadata,
-        orgId: orgId,
-        userId: userId,
-      });
-    }
-
-    // Backfill any invoices that were created before this subscription
-    // (fixes webhook timing issues where invoice arrives before subscription)
-    if (orgId || userId) {
-      const invoices = await ctx.db
-        .query("invoices")
-        .withIndex("by_stripe_subscription_id", (q) =>
-          q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
-        )
-        .collect();
-
-      for (const invoice of invoices) {
-        if (!invoice.orgId || !invoice.userId) {
-          await ctx.db.patch(invoice._id, {
-            ...(orgId && !invoice.orgId && { orgId }),
-            ...(userId && !invoice.userId && { userId }),
-          });
-        }
-      }
-    }
-
-    return null;
-  },
-});
-
-export const handleSubscriptionUpdated = mutation({
-  args: {
-    stripeSubscriptionId: v.string(),
-    status: v.string(),
-    currentPeriodEnd: v.number(),
-    cancelAtPeriodEnd: v.boolean(),
-    cancelAt: v.optional(v.number()),
-    quantity: v.optional(v.number()),
-    priceId: v.optional(v.string()),
-    metadata: v.optional(v.any()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query("subscriptions")
-      .withIndex("by_stripe_subscription_id", (q) =>
-        q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
-      )
-      .unique();
-
-    if (subscription) {
-      // Extract orgId and userId from metadata if present
-      const metadata = args.metadata || {};
-      const orgId = metadata.orgId as string | undefined;
-      const userId = metadata.userId as string | undefined;
-
-      const cancelAtPeriodEnd = args.cancelAtPeriodEnd || 
-        deriveCancelAtPeriodEnd(args.cancelAt, args.currentPeriodEnd);
-
-      await ctx.db.patch(subscription._id, {
-        status: args.status,
-        currentPeriodEnd: args.currentPeriodEnd,
-        cancelAtPeriodEnd: cancelAtPeriodEnd,
-        cancelAt: args.cancelAt ?? undefined,
-        quantity: args.quantity,
-        ...(args.priceId !== undefined && { priceId: args.priceId }),
-        // Only update metadata fields if provided
-        ...(args.metadata !== undefined && { metadata }),
+        created: args.created,
+        ...(args.metadata !== undefined && { metadata: args.metadata }),
         ...(orgId !== undefined && { orgId }),
         ...(userId !== undefined && { userId }),
       });
+      return null;
     }
 
+    await ctx.db.insert("subscriptions", {
+      stancerSubscriptionId: args.stancerSubscriptionId,
+      stancerCustomerId: args.stancerCustomerId,
+      stancerPaymentIntentId: args.stancerPaymentIntentId,
+      status: args.status,
+      created: args.created,
+      metadata: args.metadata,
+      orgId,
+      userId,
+    });
     return null;
   },
 });
 
-export const handleSubscriptionDeleted = mutation({
+export const upsertPaymentIntentFromStancer = mutation({
   args: {
-    stripeSubscriptionId: v.string(),
-    cancelAtPeriodEnd: v.optional(v.boolean()),
-    currentPeriodEnd: v.optional(v.number()),
-    cancelAt: v.optional(v.number()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query("subscriptions")
-      .withIndex("by_stripe_subscription_id", (q) =>
-        q.eq("stripeSubscriptionId", args.stripeSubscriptionId),
-      )
-      .unique();
-
-    if (subscription) {
-      await ctx.db.patch(subscription._id, {
-        status: "canceled",
-        ...(args.cancelAtPeriodEnd !== undefined && {
-          cancelAtPeriodEnd: args.cancelAtPeriodEnd,
-        }),
-        ...(args.currentPeriodEnd !== undefined && {
-          currentPeriodEnd: args.currentPeriodEnd,
-        }),
-        ...(args.cancelAt !== undefined && { cancelAt: args.cancelAt }),
-      });
-    }
-
-    return null;
-  },
-});
-
-export const handleCheckoutSessionCompleted = mutation({
-  args: {
-    stripeCheckoutSessionId: v.string(),
-    stripeCustomerId: v.optional(v.string()),
-    mode: v.string(),
+    stancerPaymentIntentId: v.string(),
+    stancerCustomerId: v.optional(v.string()),
+    stancerPaymentId: v.optional(v.string()),
+    amount: v.number(),
+    currency: v.string(),
+    status: v.string(),
+    url: v.string(),
+    returnUrl: v.optional(v.string()),
+    created: v.number(),
     metadata: v.optional(v.any()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const existing = await ctx.db
-      .query("checkout_sessions")
-      .withIndex("by_stripe_checkout_session_id", (q) =>
-        q.eq("stripeCheckoutSessionId", args.stripeCheckoutSessionId),
+      .query("payment_intents")
+      .withIndex("by_stancer_payment_intent_id", (q) =>
+        q.eq("stancerPaymentIntentId", args.stancerPaymentIntentId),
       )
       .unique();
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        status: "complete",
-        stripeCustomerId: args.stripeCustomerId,
-      });
-    } else {
-      await ctx.db.insert("checkout_sessions", {
-        stripeCheckoutSessionId: args.stripeCheckoutSessionId,
-        stripeCustomerId: args.stripeCustomerId,
-        status: "complete",
-        mode: args.mode,
-        metadata: args.metadata || {},
-      });
-    }
-
-    return null;
-  },
-});
-
-export const handleInvoiceCreated = mutation({
-  args: {
-    stripeInvoiceId: v.string(),
-    stripeCustomerId: v.string(),
-    stripeSubscriptionId: v.optional(v.string()),
-    status: v.string(),
-    amountDue: v.number(),
-    amountPaid: v.number(),
-    created: v.number(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("invoices")
-      .withIndex("by_stripe_invoice_id", (q) =>
-        q.eq("stripeInvoiceId", args.stripeInvoiceId),
-      )
-      .unique();
-
-    if (!existing) {
-      // Look up orgId/userId from the subscription if available
-      let orgId: string | undefined;
-      let userId: string | undefined;
-
-      if (args.stripeSubscriptionId) {
-        const subscription = await ctx.db
-          .query("subscriptions")
-          .withIndex("by_stripe_subscription_id", (q) =>
-            q.eq("stripeSubscriptionId", args.stripeSubscriptionId!),
-          )
-          .unique();
-
-        if (subscription) {
-          orgId = subscription.orgId;
-          userId = subscription.userId;
-        }
-      }
-
-      await ctx.db.insert("invoices", {
-        stripeInvoiceId: args.stripeInvoiceId,
-        stripeCustomerId: args.stripeCustomerId,
-        stripeSubscriptionId: args.stripeSubscriptionId,
+        ...(args.stancerCustomerId !== undefined && {
+          stancerCustomerId: args.stancerCustomerId,
+        }),
+        ...(args.stancerPaymentId !== undefined && {
+          stancerPaymentId: args.stancerPaymentId,
+        }),
+        amount: args.amount,
+        currency: args.currency,
         status: args.status,
-        amountDue: args.amountDue,
-        amountPaid: args.amountPaid,
+        url: args.url,
+        ...(args.returnUrl !== undefined && { returnUrl: args.returnUrl }),
         created: args.created,
-        orgId,
-        userId,
+        ...(args.metadata !== undefined && { metadata: args.metadata }),
       });
+      return null;
     }
 
+    await ctx.db.insert("payment_intents", {
+      stancerPaymentIntentId: args.stancerPaymentIntentId,
+      stancerCustomerId: args.stancerCustomerId,
+      stancerPaymentId: args.stancerPaymentId,
+      amount: args.amount,
+      currency: args.currency,
+      status: args.status,
+      url: args.url,
+      returnUrl: args.returnUrl,
+      created: args.created,
+      metadata: args.metadata,
+    });
     return null;
   },
 });
 
-export const handleInvoicePaid = mutation({
+export const upsertPaymentFromStancer = mutation({
   args: {
-    stripeInvoiceId: v.string(),
-    amountPaid: v.number(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const invoice = await ctx.db
-      .query("invoices")
-      .withIndex("by_stripe_invoice_id", (q) =>
-        q.eq("stripeInvoiceId", args.stripeInvoiceId),
-      )
-      .unique();
-
-    if (invoice) {
-      await ctx.db.patch(invoice._id, {
-        status: "paid",
-        amountPaid: args.amountPaid,
-      });
-    }
-
-    return null;
-  },
-});
-
-export const handleInvoicePaymentFailed = mutation({
-  args: {
-    stripeInvoiceId: v.string(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const invoice = await ctx.db
-      .query("invoices")
-      .withIndex("by_stripe_invoice_id", (q) =>
-        q.eq("stripeInvoiceId", args.stripeInvoiceId),
-      )
-      .unique();
-
-    if (invoice) {
-      await ctx.db.patch(invoice._id, {
-        status: "open",
-      });
-    }
-
-    return null;
-  },
-});
-
-export const handlePaymentIntentSucceeded = mutation({
-  args: {
-    stripePaymentIntentId: v.string(),
-    stripeCustomerId: v.optional(v.string()),
+    stancerPaymentId: v.string(),
+    stancerPaymentIntentId: v.optional(v.string()),
+    stancerCustomerId: v.optional(v.string()),
     amount: v.number(),
     currency: v.string(),
     status: v.string(),
@@ -431,59 +178,93 @@ export const handlePaymentIntentSucceeded = mutation({
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("payments")
-      .withIndex("by_stripe_payment_intent_id", (q) =>
-        q.eq("stripePaymentIntentId", args.stripePaymentIntentId),
+      .withIndex("by_stancer_payment_id", (q) =>
+        q.eq("stancerPaymentId", args.stancerPaymentId),
       )
       .unique();
 
-    if (!existing) {
-      // Extract orgId and userId from metadata if present
-      const metadata = args.metadata || {};
-      const orgId = metadata.orgId as string | undefined;
-      const userId = metadata.userId as string | undefined;
+    const { orgId, userId } = extractLinkingFields(args.metadata);
 
-      await ctx.db.insert("payments", {
-        stripePaymentIntentId: args.stripePaymentIntentId,
-        stripeCustomerId: args.stripeCustomerId,
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        ...(args.stancerPaymentIntentId !== undefined && {
+          stancerPaymentIntentId: args.stancerPaymentIntentId,
+        }),
+        ...(args.stancerCustomerId !== undefined && {
+          stancerCustomerId: args.stancerCustomerId,
+        }),
         amount: args.amount,
         currency: args.currency,
         status: args.status,
         created: args.created,
-        metadata: metadata,
-        orgId: orgId,
-        userId: userId,
+        ...(args.metadata !== undefined && { metadata: args.metadata }),
+        ...(orgId !== undefined && { orgId }),
+        ...(userId !== undefined && { userId }),
       });
-    } else if (args.stripeCustomerId && !existing.stripeCustomerId) {
-      // Update customer ID if it wasn't set initially (webhook timing issue)
-      await ctx.db.patch(existing._id, {
-        stripeCustomerId: args.stripeCustomerId,
-      });
+      return null;
     }
 
+    await ctx.db.insert("payments", {
+      stancerPaymentId: args.stancerPaymentId,
+      stancerPaymentIntentId: args.stancerPaymentIntentId,
+      stancerCustomerId: args.stancerCustomerId,
+      amount: args.amount,
+      currency: args.currency,
+      status: args.status,
+      created: args.created,
+      metadata: args.metadata,
+      orgId,
+      userId,
+    });
     return null;
   },
 });
 
-export const updatePaymentCustomer = mutation({
+export const upsertRefundFromStancer = mutation({
   args: {
-    stripePaymentIntentId: v.string(),
-    stripeCustomerId: v.string(),
+    stancerRefundId: v.string(),
+    stancerPaymentId: v.string(),
+    stancerPaymentIntentId: v.optional(v.string()),
+    amount: v.number(),
+    currency: v.optional(v.string()),
+    status: v.string(),
+    created: v.number(),
+    metadata: v.optional(v.any()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const payment = await ctx.db
-      .query("payments")
-      .withIndex("by_stripe_payment_intent_id", (q) =>
-        q.eq("stripePaymentIntentId", args.stripePaymentIntentId),
+    const existing = await ctx.db
+      .query("refunds")
+      .withIndex("by_stancer_refund_id", (q) =>
+        q.eq("stancerRefundId", args.stancerRefundId),
       )
       .unique();
 
-    if (payment && !payment.stripeCustomerId) {
-      await ctx.db.patch(payment._id, {
-        stripeCustomerId: args.stripeCustomerId,
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        stancerPaymentId: args.stancerPaymentId,
+        ...(args.stancerPaymentIntentId !== undefined && {
+          stancerPaymentIntentId: args.stancerPaymentIntentId,
+        }),
+        amount: args.amount,
+        ...(args.currency !== undefined && { currency: args.currency }),
+        status: args.status,
+        created: args.created,
+        ...(args.metadata !== undefined && { metadata: args.metadata }),
       });
+      return null;
     }
 
+    await ctx.db.insert("refunds", {
+      stancerRefundId: args.stancerRefundId,
+      stancerPaymentId: args.stancerPaymentId,
+      stancerPaymentIntentId: args.stancerPaymentIntentId,
+      amount: args.amount,
+      currency: args.currency,
+      status: args.status,
+      created: args.created,
+      metadata: args.metadata,
+    });
     return null;
   },
 });

@@ -9,7 +9,7 @@
  */
 
 import type * as http from "../http.js";
-import type * as stripe from "../stripe.js";
+import type * as stancer from "../stancer.js";
 
 import type {
   ApiFromModules,
@@ -19,7 +19,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   http: typeof http;
-  stripe: typeof stripe;
+  stancer: typeof stancer;
 }>;
 
 /**
@@ -49,5 +49,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  stripe: import("@convex-dev/stripe/_generated/component.js").ComponentApi<"stripe">;
+  stancer: import("convex-stancer/_generated/component.js").ComponentApi<"stancer">;
 };

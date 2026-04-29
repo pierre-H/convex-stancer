@@ -1,12 +1,12 @@
 {
-  "name": "@convex-dev/stripe",
-  "description": "A stripe component for Convex.",
-  "repository": "github:get-convex/stripe",
-  "homepage": "https://github.com/get-convex/stripe#readme",
+  "name": "convex-stancer",
+  "description": "A Stancer component for Convex.",
+  "repository": "github:get-convex/convex-stancer",
+  "homepage": "https://github.com/get-convex/convex-stancer#readme",
   "bugs": {
-    "url": "https://github.com/get-convex/stripe/issues"
+    "url": "https://github.com/get-convex/convex-stancer/issues"
   },
-  "version": "0.1.4",
+  "version": "0.0.1",
   "license": "Apache-2.0",
   "keywords": [
     "convex",
@@ -30,14 +30,13 @@
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:coverage": "vitest run --coverage --coverage.reporter=text",
     "preversion": "npm ci && npm run build:clean && run-p test lint typecheck",
-    "prepublishOnly": "npm whoami || npm login",
+    "prepublishOnly": "npm run build && npm run typecheck && npm test && npm pack --dry-run >/dev/null",
     "alpha": "npm version prerelease --preid alpha && npm publish --tag alpha && git push --follow-tags",
     "release": "npm version patch && npm publish && git push --follow-tags",
     "version": "vim -c 'normal o' -c 'normal o## '$npm_package_version CHANGELOG.md && prettier -w CHANGELOG.md && git add CHANGELOG.md"
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "exports": {
     "./package.json": "./package.json",
@@ -49,7 +48,6 @@
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
     },
-    "./test": "./src/test.ts",
     "./_generated/component.js": {
       "types": "./dist/component/_generated/component.d.ts"
     },
@@ -95,7 +93,5 @@
   },
   "types": "./dist/client/index.d.ts",
   "module": "./dist/client/index.js",
-  "dependencies": {
-    "stripe": "^20.0.0"
-  }
+  "dependencies": {}
 }

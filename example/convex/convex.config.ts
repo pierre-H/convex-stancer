@@ -1,7 +1,7 @@
 import { defineApp } from "convex/server";
-import stripe from "@convex-dev/stripe/convex.config.js";
+import stancer from "../../src/component/convex.config.js";
 
 const app = defineApp();
-app.use(stripe);
+app.use(stancer);
 
 export default app;
