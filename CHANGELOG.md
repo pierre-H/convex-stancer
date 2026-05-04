@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.3
+
+Update dependancies and merge main
+
 ## 0.0.2
 
 Add example
