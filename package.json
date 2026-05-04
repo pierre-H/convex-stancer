@@ -1,10 +1,10 @@
 {
   "name": "convex-stancer",
   "description": "A Stancer component for Convex.",
-  "repository": "github:get-convex/convex-stancer",
-  "homepage": "https://github.com/get-convex/convex-stancer#readme",
+  "repository": "github:pierre-H/convex-stancer",
+  "homepage": "https://github.com/pierre-H/convex-stancer#readme",
   "bugs": {
-    "url": "https://github.com/get-convex/convex-stancer/issues"
+    "url": "https://github.com/pierre-H/convex-stancer/issues"
   },
   "version": "0.0.3",
   "license": "Apache-2.0",
