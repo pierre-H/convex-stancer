@@ -39,6 +39,10 @@ Add in Convex Dashboard:
 
 ## Basic usage
 
+`StancerPayments` is server-only. Instantiate and call it from Convex actions or
+other trusted server runtimes, never from browser code, because it uses your
+`STANCER_API_KEY`.
+
 `convex/stancer.ts`
 
 ```ts
@@ -115,6 +119,8 @@ Use `components.stancer.public`:
 ## Notes
 
 - Stancer has no webhook model in this component flow.
+- `StancerPayments` must run on the server. Browser runtimes are rejected
+  explicitly to avoid leaking `STANCER_API_KEY`.
 - Status consistency depends on explicit sync calls (typically after callback).
 - If your app cannot recover the `paymentIntentId` from the callback request
   itself, keep a correlation id on your side before redirecting to Stancer so

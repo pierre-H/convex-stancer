@@ -6,11 +6,12 @@
   "bugs": {
     "url": "https://github.com/pierre-H/convex-stancer/issues"
   },
-  "version": "0.0.3",
+  "version": "0.0.4",
   "license": "Apache-2.0",
   "keywords": [
     "convex",
-    "component"
+    "component",
+    "stancer"
   ],
   "type": "module",
   "scripts": {

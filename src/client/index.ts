@@ -52,6 +52,27 @@ type StancerRefund = {
 
 export type StancerComponent = any;
 
+function encodeBase64(value: string): string {
+  if (typeof globalThis.btoa === "function") {
+    return globalThis.btoa(value);
+  }
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(value).toString("base64");
+  }
+  throw new Error("Unable to encode base64 in the current runtime");
+}
+
+function assertServerRuntime(): void {
+  if (
+    typeof globalThis.window !== "undefined" &&
+    typeof globalThis.document !== "undefined"
+  ) {
+    throw new Error(
+      "StancerPayments must run on the server, for example inside a Convex action. Do not use STANCER_API_KEY in the browser.",
+    );
+  }
+}
+
 function toEpochSeconds(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.floor(value);
@@ -90,7 +111,7 @@ export class StancerPayments {
   }
 
   private get authHeader(): string {
-    return `Basic ${Buffer.from(`${this.apiKey}:`).toString("base64")}`;
+    return `Basic ${encodeBase64(`${this.apiKey}:`)}`;
   }
 
   private async request<T>(
@@ -98,6 +119,7 @@ export class StancerPayments {
     path: string,
     body?: UnknownRecord,
   ): Promise<T> {
+    assertServerRuntime();
     const response = await fetch(`${this._baseUrl}${path}`, {
       method,
       headers: {

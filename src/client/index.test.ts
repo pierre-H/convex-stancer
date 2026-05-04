@@ -31,6 +31,76 @@ describe("StancerPayments client", () => {
     if (original) process.env.STANCER_API_KEY = original;
   });
 
+  test("uses btoa when Buffer is unavailable", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "pi_test_btoa",
+        amount: 1999,
+        currency: "eur",
+        status: "require_payment_method",
+        url: "https://payment.stancer.com/pi_test_btoa",
+        created: 1710000000,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("Buffer", undefined);
+    vi.stubGlobal("btoa", vi.fn().mockReturnValue("c3Rlc3RfMTIzOg=="));
+
+    const ctx = {
+      runAction: vi.fn(),
+      runQuery: vi.fn(),
+      runMutation: vi.fn().mockResolvedValue(null),
+    };
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+      STANCER_API_BASE_URL: "https://api.stancer.com/v2",
+    });
+
+    await client.createPaymentIntent(ctx, {
+      amount: 1999,
+      returnUrl: "https://app.example.com/payment/callback",
+    });
+
+    expect(globalThis.btoa).toHaveBeenCalledWith("stest_123:");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.stancer.com/v2/payment_intents/",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Basic c3Rlc3RfMTIzOg==",
+        }),
+      }),
+    );
+  });
+
+  test("throws a clear error in browser runtimes", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", {});
+
+    const ctx = {
+      runAction: vi.fn(),
+      runQuery: vi.fn(),
+      runMutation: vi.fn().mockResolvedValue(null),
+    };
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+    });
+
+    await expect(
+      client.createPaymentIntent(ctx, {
+        amount: 1999,
+        returnUrl: "https://app.example.com/payment/callback",
+      }),
+    ).rejects.toThrow(
+      "StancerPayments must run on the server, for example inside a Convex action. Do not use STANCER_API_KEY in the browser.",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   test("createPaymentIntent stores intent via internal mutation", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
