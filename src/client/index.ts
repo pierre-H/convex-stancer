@@ -379,7 +379,6 @@ export class StancerPayments {
     const refund = await this.request<StancerRefund>("POST", "/refunds/", {
       payment: args.paymentId,
       ...(args.amount !== undefined && { amount: args.amount }),
-      ...(args.metadata !== undefined && { metadata: args.metadata }),
     });
 
     const payment = await ctx.runQuery(this.component.public.getPayment, {
@@ -394,7 +393,7 @@ export class StancerPayments {
       currency: refund.currency,
       status: refund.status ?? "pending",
       created: toEpochSeconds(refund.created),
-      metadata: refund.metadata,
+      metadata: refund.metadata ?? args.metadata,
     });
 
     return {

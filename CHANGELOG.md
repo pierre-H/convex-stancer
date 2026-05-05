@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.6
+
+Regenerate the published `dist` artifacts so they match the source fixes for
+Stancer v2. Stop sending unsupported `metadata` to `/v2/customers/` and
+`/v2/refunds/`, while preserving local Convex metadata storage and customer
+linking by `userId`.
+
 ## 0.0.5
 
 Fix customer creation against the Stancer API by no longer sending unsupported

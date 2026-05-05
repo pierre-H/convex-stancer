@@ -345,4 +345,59 @@ describe("StancerPayments client", () => {
       }),
     );
   });
+
+  test("refundPayment does not send metadata to Stancer but stores it locally", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "refd_test_123",
+        payment: "paym_test_123",
+        amount: 500,
+        currency: "eur",
+        status: "pending",
+        created: 1710000003,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = {
+      runAction: vi.fn(),
+      runQuery: vi.fn().mockResolvedValue({
+        stancerPaymentIntentId: "pi_test_123",
+      }),
+      runMutation: vi.fn().mockResolvedValue(null),
+    };
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+      STANCER_API_BASE_URL: "https://api.stancer.com/v2",
+    });
+
+    const result = await client.refundPayment(ctx, {
+      paymentId: "paym_test_123",
+      amount: 500,
+      metadata: { dossierId: "123" },
+    });
+
+    expect(result).toEqual({ refundId: "refd_test_123", status: "pending" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.stancer.com/v2/refunds/",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          payment: "paym_test_123",
+          amount: 500,
+        }),
+      }),
+    );
+    expect(ctx.runMutation).toHaveBeenCalledWith(
+      components.stancer.private.upsertRefundFromStancer,
+      expect.objectContaining({
+        stancerRefundId: "refd_test_123",
+        stancerPaymentId: "paym_test_123",
+        stancerPaymentIntentId: "pi_test_123",
+        metadata: { dossierId: "123" },
+      }),
+    );
+  });
 });
