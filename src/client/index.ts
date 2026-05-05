@@ -154,7 +154,6 @@ export class StancerPayments {
       ...(args.email !== undefined && { email: args.email }),
       ...(args.name !== undefined && { name: args.name }),
       ...(args.mobile !== undefined && { mobile: args.mobile }),
-      ...(args.metadata !== undefined && { metadata: args.metadata }),
       ...(args.idempotencyKey !== undefined && {
         external_id: args.idempotencyKey,
       }),
@@ -171,7 +170,7 @@ export class StancerPayments {
       email: customer.email,
       name: customer.name,
       mobile: customer.mobile,
-      metadata: customer.metadata,
+      metadata: customer.metadata ?? args.metadata,
     });
 
     return {
@@ -205,6 +204,17 @@ export class StancerPayments {
         { email: args.email },
       );
       if (existingByEmail) {
+        if (existingByEmail.userId !== args.userId) {
+          const metadata =
+            existingByEmail.metadata &&
+            typeof existingByEmail.metadata === "object"
+              ? (existingByEmail.metadata as Record<string, unknown>)
+              : {};
+          await ctx.runMutation(this.component.public.createOrUpdateCustomer, {
+            stancerCustomerId: existingByEmail.stancerCustomerId,
+            metadata: { ...metadata, userId: args.userId },
+          });
+        }
         return {
           customerId: existingByEmail.stancerCustomerId,
           isNew: false,

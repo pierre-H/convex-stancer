@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.5
+
+Fix customer creation against the Stancer API by no longer sending unsupported
+`metadata` to `/v2/customers/`, while preserving local user linking and
+backfilling `userId` when an existing customer is matched by email.
+
 ## 0.0.4
 
 Fix `Buffer is not defined` in non-Node runtimes by using a web-compatible

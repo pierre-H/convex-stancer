@@ -147,6 +147,146 @@ describe("StancerPayments client", () => {
     );
   });
 
+  test("createCustomer does not send metadata to Stancer but stores it locally", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "cust_test_123",
+        email: "user@example.com",
+        name: "Jane Doe",
+        mobile: "+33123456789",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = {
+      runAction: vi.fn(),
+      runQuery: vi.fn(),
+      runMutation: vi.fn().mockResolvedValue(null),
+    };
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+      STANCER_API_BASE_URL: "https://api.stancer.com/v2",
+    });
+
+    const result = await client.createCustomer(ctx, {
+      email: "user@example.com",
+      name: "Jane Doe",
+      mobile: "+33123456789",
+      metadata: { userId: "user_123" },
+      idempotencyKey: "user_123",
+    });
+
+    expect(result).toEqual({ customerId: "cust_test_123" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.stancer.com/v2/customers/",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          email: "user@example.com",
+          name: "Jane Doe",
+          mobile: "+33123456789",
+          external_id: "user_123",
+        }),
+      }),
+    );
+    expect(ctx.runMutation).toHaveBeenCalledWith(
+      components.stancer.public.createOrUpdateCustomer,
+      expect.objectContaining({
+        stancerCustomerId: "cust_test_123",
+        metadata: { userId: "user_123" },
+      }),
+    );
+  });
+
+  test("getOrCreateCustomer creates a customer without sending metadata", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "cust_test_456",
+        email: "user@example.com",
+        name: "Jane Doe",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = {
+      runAction: vi.fn(),
+      runQuery: vi
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null),
+      runMutation: vi.fn().mockResolvedValue(null),
+    };
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+      STANCER_API_BASE_URL: "https://api.stancer.com/v2",
+    });
+
+    const result = await client.getOrCreateCustomer(ctx, {
+      userId: "user_123",
+      email: "user@example.com",
+      name: "Jane Doe",
+    });
+
+    expect(result).toEqual({ customerId: "cust_test_456", isNew: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.stancer.com/v2/customers/",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          email: "user@example.com",
+          name: "Jane Doe",
+          external_id: "user_123",
+        }),
+      }),
+    );
+    expect(ctx.runMutation).toHaveBeenCalledWith(
+      components.stancer.public.createOrUpdateCustomer,
+      expect.objectContaining({
+        stancerCustomerId: "cust_test_456",
+        metadata: { userId: "user_123" },
+      }),
+    );
+  });
+
+  test("getOrCreateCustomer links an email-matched customer to the user locally", async () => {
+    const ctx = {
+      runAction: vi.fn(),
+      runQuery: vi
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          stancerCustomerId: "cust_test_email",
+          email: "user@example.com",
+          metadata: { source: "import" },
+        }),
+      runMutation: vi.fn().mockResolvedValue(null),
+    };
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+      STANCER_API_BASE_URL: "https://api.stancer.com/v2",
+    });
+
+    const result = await client.getOrCreateCustomer(ctx, {
+      userId: "user_123",
+      email: "user@example.com",
+      name: "Jane Doe",
+    });
+
+    expect(result).toEqual({ customerId: "cust_test_email", isNew: false });
+    expect(ctx.runMutation).toHaveBeenCalledWith(
+      components.stancer.public.createOrUpdateCustomer,
+      {
+        stancerCustomerId: "cust_test_email",
+        metadata: { source: "import", userId: "user_123" },
+      },
+    );
+  });
+
   test("syncPaymentIntentStatus fetches payment and upserts both", async () => {
     const fetchMock = vi
       .fn()
