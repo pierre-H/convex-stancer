@@ -125,3 +125,25 @@ Use `components.stancer.public`:
 - If your app cannot recover the `paymentIntentId` from the callback request
   itself, keep a correlation id on your side before redirecting to Stancer so
   the callback page can trigger `syncPaymentAfterCallback` reliably.
+
+## Legal notice
+
+`convex-stancer` is an independent, unofficial, community-maintained package.
+It is not an official Stancer product and is not affiliated with, endorsed by,
+approved by, sponsored by, or otherwise associated with Stancer, its
+affiliates, or its licensors.
+
+The name "Stancer" is used solely for descriptive and nominative purposes to
+indicate compatibility with and integration of the Stancer payment platform.
+No claim of ownership, partnership, authorization, certification, or exclusive
+relationship with Stancer is made by this project.
+
+"Stancer", related brand names, logos, service marks, trademarks, and other
+distinctive signs are and remain the property of their respective owners. This
+project does not grant any right, title, or interest in or to any Stancer
+intellectual property. Any use of third-party names or marks in this repository
+is strictly informational.
+
+If you are the owner or representative of the Stancer brand and believe any
+reference in this repository is inaccurate or inappropriate, please open an
+issue so it can be reviewed and corrected promptly.
