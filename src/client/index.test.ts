@@ -147,6 +147,62 @@ describe("StancerPayments client", () => {
     );
   });
 
+  test("createPaymentIntent omits nullable Stancer fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "pi_test_null_payment",
+        customer: null,
+        payment: null,
+        amount: 1999,
+        currency: "eur",
+        status: "require_payment_method",
+        url: "https://payment.stancer.com/pi_test_null_payment",
+        return_url: null,
+        created: 1710000000,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = {
+      runAction: vi.fn(),
+      runQuery: vi.fn(),
+      runMutation: vi.fn().mockImplementation(async (_mutation, args) => {
+        expect(Object.values(args)).not.toContain(null);
+        return null;
+      }),
+    };
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+      STANCER_API_BASE_URL: "https://api.stancer.com/v2",
+    });
+
+    await expect(
+      client.createPaymentIntent(ctx, {
+        amount: 1999,
+        returnUrl: "https://app.example.com/payment/callback",
+      }),
+    ).resolves.toEqual({
+      paymentIntentId: "pi_test_null_payment",
+      url: "https://payment.stancer.com/pi_test_null_payment",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(ctx.runMutation).toHaveBeenCalledWith(
+      components.stancer.private.upsertPaymentIntentFromStancer,
+      expect.not.objectContaining({
+        stancerCustomerId: null,
+        stancerPaymentId: null,
+        returnUrl: null,
+      }),
+    );
+    const [, args] = ctx.runMutation.mock.calls[0];
+    expect(args).not.toHaveProperty("stancerCustomerId");
+    expect(args).not.toHaveProperty("stancerPaymentId");
+    expect(args).not.toHaveProperty("returnUrl");
+  });
+
   test("createCustomer does not send metadata to Stancer but stores it locally", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -344,6 +400,57 @@ describe("StancerPayments client", () => {
         stancerPaymentIntentId: "pi_test_456",
       }),
     );
+  });
+
+  test("syncPaymentIntentStatus omits nullable payment intent fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "pi_test_sync_null_payment",
+        customer: null,
+        payment: null,
+        amount: 5000,
+        currency: "eur",
+        status: "pending",
+        url: "https://payment.stancer.com/pi_test_sync_null_payment",
+        return_url: null,
+        created: 1710000000,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = {
+      runAction: vi.fn(),
+      runQuery: vi.fn(),
+      runMutation: vi.fn().mockImplementation(async (_mutation, args) => {
+        expect(Object.values(args)).not.toContain(null);
+        return null;
+      }),
+    };
+
+    const client = new StancerPayments(components.stancer, {
+      STANCER_API_KEY: "stest_123",
+      STANCER_API_BASE_URL: "https://api.stancer.com/v2",
+    });
+
+    await expect(
+      client.syncPaymentIntentStatus(ctx, {
+        paymentIntentId: "pi_test_sync_null_payment",
+      }),
+    ).resolves.toEqual({
+      paymentIntentId: "pi_test_sync_null_payment",
+      paymentId: null,
+      status: "pending",
+      amount: 5000,
+      currency: "eur",
+      url: "https://payment.stancer.com/pi_test_sync_null_payment",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, args] = ctx.runMutation.mock.calls[0];
+    expect(args).not.toHaveProperty("stancerCustomerId");
+    expect(args).not.toHaveProperty("stancerPaymentId");
+    expect(args).not.toHaveProperty("returnUrl");
   });
 
   test("refundPayment does not send metadata to Stancer but stores it locally", async () => {

@@ -10,29 +10,29 @@ type UnknownRecord = Record<string, unknown>;
 
 type StancerCustomer = {
   id: string;
-  email?: string;
-  name?: string;
-  mobile?: string;
+  email?: string | null;
+  name?: string | null;
+  mobile?: string | null;
   metadata?: unknown;
 };
 
 type StancerPaymentIntent = {
   id: string;
-  customer?: string;
-  payment?: string;
+  customer?: string | null;
+  payment?: string | null;
   amount: number;
   currency: string;
   status: string;
   url: string;
-  return_url?: string;
+  return_url?: string | null;
   created?: number | string;
   metadata?: unknown;
 };
 
 type StancerPayment = {
   id: string;
-  payment_intent?: string;
-  customer?: string;
+  payment_intent?: string | null;
+  customer?: string | null;
   amount: number;
   currency: string;
   status?: string;
@@ -42,9 +42,9 @@ type StancerPayment = {
 
 type StancerRefund = {
   id: string;
-  payment?: string;
+  payment?: string | null;
   amount: number;
-  currency?: string;
+  currency?: string | null;
   status?: string;
   created?: number | string;
   metadata?: unknown;
@@ -167,9 +167,9 @@ export class StancerPayments {
 
     await ctx.runMutation(this.component.public.createOrUpdateCustomer, {
       stancerCustomerId: customer.id,
-      email: customer.email,
-      name: customer.name,
-      mobile: customer.mobile,
+      ...(customer.email != null ? { email: customer.email } : {}),
+      ...(customer.name != null ? { name: customer.name } : {}),
+      ...(customer.mobile != null ? { mobile: customer.mobile } : {}),
       metadata: customer.metadata ?? args.metadata,
     });
 
@@ -269,13 +269,19 @@ export class StancerPayments {
       this.component.private.upsertPaymentIntentFromStancer,
       {
         stancerPaymentIntentId: paymentIntent.id,
-        stancerCustomerId: paymentIntent.customer,
-        stancerPaymentId: paymentIntent.payment,
+        ...(paymentIntent.customer != null
+          ? { stancerCustomerId: paymentIntent.customer }
+          : {}),
+        ...(paymentIntent.payment != null
+          ? { stancerPaymentId: paymentIntent.payment }
+          : {}),
         amount: paymentIntent.amount,
         currency: paymentIntent.currency,
         status: paymentIntent.status,
         url: paymentIntent.url,
-        returnUrl: paymentIntent.return_url,
+        ...(paymentIntent.return_url != null
+          ? { returnUrl: paymentIntent.return_url }
+          : {}),
         created: toEpochSeconds(paymentIntent.created),
         metadata: paymentIntent.metadata,
       },
@@ -308,13 +314,19 @@ export class StancerPayments {
       this.component.private.upsertPaymentIntentFromStancer,
       {
         stancerPaymentIntentId: paymentIntent.id,
-        stancerCustomerId: paymentIntent.customer,
-        stancerPaymentId: paymentIntent.payment,
+        ...(paymentIntent.customer != null
+          ? { stancerCustomerId: paymentIntent.customer }
+          : {}),
+        ...(paymentIntent.payment != null
+          ? { stancerPaymentId: paymentIntent.payment }
+          : {}),
         amount: paymentIntent.amount,
         currency: paymentIntent.currency,
         status: paymentIntent.status,
         url: paymentIntent.url,
-        returnUrl: paymentIntent.return_url,
+        ...(paymentIntent.return_url != null
+          ? { returnUrl: paymentIntent.return_url }
+          : {}),
         created: toEpochSeconds(paymentIntent.created),
         metadata: paymentIntent.metadata,
       },
@@ -329,9 +341,14 @@ export class StancerPayments {
 
       await ctx.runMutation(this.component.private.upsertPaymentFromStancer, {
         stancerPaymentId: payment.id,
-        stancerPaymentIntentId:
-          payment.payment_intent ?? paymentIntent.id ?? undefined,
-        stancerCustomerId: payment.customer ?? paymentIntent.customer,
+        ...(payment.payment_intent != null
+          ? { stancerPaymentIntentId: payment.payment_intent }
+          : { stancerPaymentIntentId: paymentIntent.id }),
+        ...(payment.customer != null
+          ? { stancerCustomerId: payment.customer }
+          : paymentIntent.customer != null
+            ? { stancerCustomerId: paymentIntent.customer }
+            : {}),
         amount: payment.amount,
         currency: payment.currency,
         status: payment.status ?? paymentIntent.status,
@@ -390,7 +407,7 @@ export class StancerPayments {
       stancerPaymentId: refund.payment ?? args.paymentId,
       stancerPaymentIntentId: payment?.stancerPaymentIntentId,
       amount: refund.amount,
-      currency: refund.currency,
+      ...(refund.currency != null ? { currency: refund.currency } : {}),
       status: refund.status ?? "pending",
       created: toEpochSeconds(refund.created),
       metadata: refund.metadata ?? args.metadata,

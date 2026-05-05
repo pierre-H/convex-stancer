@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.7
+
+Fix Convex argument validation for nullable fields returned by Stancer. Payment
+intents created before a payment exists now omit nullable Stancer identifiers
+instead of passing `null` to `v.optional(v.string())` validators.
+
 ## 0.0.6
 
 Regenerate the published `dist` artifacts so they match the source fixes for
