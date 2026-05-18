@@ -1,5 +1,17 @@
 # convex-stancer
 
+> [!WARNING]
+> This project is archived and no longer maintained.
+>
+> I am putting this component aside because Stancer, for unclear reasons,
+> refused account creation for legal businesses that appeared to be allowed
+> under their own terms of use. Stancer support did not answer by email despite
+> several follow-ups, so I unfortunately cannot recommend Stancer under these
+> conditions.
+>
+> This is regrettable, because I am convinced Stancer is otherwise an excellent
+> product.
+
 A Convex component for integrating Stancer payments with local Convex sync.
 
 This package is a Stancer-first replacement for the previous Stripe component:
